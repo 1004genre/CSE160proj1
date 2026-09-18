@@ -39,6 +39,7 @@ implementation{
    event void AMControl.startDone(error_t err){
       if(err == SUCCESS){
          dbg(GENERAL_CHANNEL, "Radio On\n");
+         call Ndisocvery.start();
       }else{
          //Retry until successful
          call AMControl.start();
