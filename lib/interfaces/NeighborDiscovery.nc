@@ -1,4 +1,5 @@
-interface NeighborDiscovery {             // Defines the small API Node needs from neighbor discovery.
-   command void start();                  // Starts periodic neighbor beaconing.
-   command void print();                  // Prints the current neighbor table on request.
+// start beacons and print the current table.
+interface NeighborDiscovery {
+   command void start();
+   command void print();
 }
