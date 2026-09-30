@@ -4,13 +4,14 @@
 
 configuration NodeC {}
 implementation {
-    components MainC, Node, ActiveMessageC, CommandHandlerC, NeighborDiscoveryC;
+    components MainC, Node, ActiveMessageC, CommandHandlerC;
+    components NeighborDiscoveryC, FloodingC;
     components new AMReceiverC(AM_PACK) as GeneralReceive;
-    components new SimpleSendC(AM_PACK);
+
     Node -> MainC.Boot;
     Node.Receive -> GeneralReceive;
     Node.AMControl -> ActiveMessageC;
-    Node.Sender -> SimpleSendC;
     Node.CommandHandler -> CommandHandlerC;
-    Node.NeighborDiscovery -> NeighborDiscoveryC; // wires Node to the new neighbor service.
+    Node.NeighborDiscovery -> NeighborDiscoveryC;
+    Node.Flooding -> FloodingC; // Added: wires all flood send/receive logic through FloodingC.
 }

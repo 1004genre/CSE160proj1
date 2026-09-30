@@ -1,7 +1,6 @@
 #include "../../includes/channels.h"
 #include "../../includes/packet.h"
 
-// one-hop beacons refresh entries; five missed periods remove an entry.
 enum {
    BEACON_PERIOD = 1000,
    NEIGHBOR_TIMEOUT = 5,

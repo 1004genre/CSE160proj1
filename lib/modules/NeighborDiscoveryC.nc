@@ -1,6 +1,5 @@
 #include "../../includes/packet.h"
 
-// wires the neighbor-discovery logic to its timer and radio services.
 configuration NeighborDiscoveryC {
    provides interface NeighborDiscovery;
 }

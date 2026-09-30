@@ -1,3 +1,5 @@
+// put flooding in a different module, like neighbordiscovery
+
 #include <Timer.h>
 #include "includes/command.h"
 #include "includes/packet.h"
@@ -118,7 +120,7 @@ implementation {
       }
    }
 
-   // broadcasts through SimpleSend so every directly connected node receives the flood.
+   // xbroadcasts through SimpleSend so every directly connected node receives the flood.
    void flood(pack *p) {
       call Sender.send(*p, AM_BROADCAST_ADDR);
       dbg(FLOODING_CHANNEL, "Node %d broadcast packet from %d seq %d\n", TOS_NODE_ID, p->src, p->seq);
