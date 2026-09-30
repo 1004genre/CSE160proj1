@@ -1,0 +1,28 @@
+Discussion Questions
+
+1. Describe the pros and cons of using event-driven programming.
+Pros: 
+    High responsiveness with systems reacting immediately to events. 
+    Scalable and can handle thousands of concurrent connections efficiently without the heavy memory and CPU overhead required by multi-threading or -processing
+    Resource efficient. CPU only consumes resources when an event actually occurs which keeps it efficient in low traffic periods.
+Cons:
+Difficult to understand the flow of code since we don’t set a linear path beforehand. The path is determined by external 
+Difficult to debug especially with asynchronous errors and state-management bugs. These are especially hard due to a state possibly changing between the time an event is triggered and when its callback is executed.
+Poor for CPU-Bound Tasks. This happens when an event handler performs a long, heavy computation, which blocks the main event loop.
+
+2. Flooding includes a mechanism to prevent packets from circulating indefinitely, and the TTL field provides another mechanism. What is the benefit of having both? What would happen if we only had flooding checks? What would happen if we had only TTL checks?
+Having both safety mechanisms is good because TTL can act as a fall back for when the flooding check accidentally passes a packet it wasn’t supposed to. Let’s say this packet lost its check data and that’s how it passed through the check, TTL can come in and guarantee the rogue packet will still eventually stop.
+If we just have flooding checks then the above scenario would allow this rogue packet to constantly circulate throughout the network indefinitely and cause a routing loop, consuming all available bandwidth.
+Having just TTL checks would make it so that all packets are constantly being sent out and duplicated until the Time To Live runs out which causes an exponential duplication of packets, wasting immense amounts of bandwidth and processing power.
+
+3. When using the flooding protocol, what would be the total number of packets
+sent/received by all the nodes in the best-case situation? Worse case situation? Explain the topology and the reasoning behind each case.
+The best case scenario would be a linear chain of node neighbors. In this scenario every node has only two links but since nodes don’t send the information back every node just sends it forward to the next neighbor. The source generates 1 packet and it is only sent forward once, never duplicated. The total cost is N-1 packets sent and N-1 packets received by the network.
+The worst case scenario is when 
+
+4. Using the information gathered from neighbor discovery, what would be a better way of accomplishing multi-hop communication?
+During each neighbor discovery, every node would learn who its immediate neighbors are and also store the distance between them. This information would be shared between other nodes and eventually every node knows every other node's distance between each other to build a complete graph of the network topology.
+Have each node use the information of the distance between each node given to it to run a routing algorithm to calculate the shortest path to any destination, i.e. Dijkstra’s Algorithm for Link-State routing. Now every node has an efficient way to get to any other node.
+
+5. Describe a design decision you could have made differently given that you can change the provided skeleton code and the pros and cons compared to the decision you made.
+
