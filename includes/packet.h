@@ -12,7 +12,7 @@
 enum{
 	PACKET_HEADER_LENGTH = 8,
 	PACKET_MAX_PAYLOAD_SIZE = 28 - PACKET_HEADER_LENGTH,
-	MAX_TTL = 15
+	MAX_TTL = 20 // Supports the longest 18-hop path in long_line.topo plus a small margin.
 };
 
 

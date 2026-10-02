@@ -24,14 +24,14 @@ implementation {
    bool wasSeen(pack *p);
    void remember(pack *p);
    void flood(pack *p);
+   void logFlood(char *action, pack *p);
 
    // Added: originates a unique ping and starts its broadcast flood.
    command void Flooding.ping(uint16_t destination, uint8_t *payload) {
       makePack(&sendPackage, TOS_NODE_ID, destination, MAX_TTL, PROTOCOL_PING,
                nextSequenceNumber++, payload, PACKET_MAX_PAYLOAD_SIZE);
       remember(&sendPackage);
-      dbg(FLOODING_CHANNEL, "Node %d sent ping toward %d seq %d\n",
-          TOS_NODE_ID, destination, sendPackage.seq);
+      logFlood("originated", &sendPackage);
       flood(&sendPackage);
    }
 
@@ -42,14 +42,12 @@ implementation {
          return;
       }
       if (wasSeen(received)) {
-         dbg(FLOODING_CHANNEL, "Node %d dropped duplicate from %d seq %d\n",
-             TOS_NODE_ID, received->src, received->seq);
+         logFlood("duplicate dropped", received);
          return;
       }
 
       remember(received);
-      dbg(FLOODING_CHANNEL, "Node %d received packet from %d seq %d\n",
-          TOS_NODE_ID, received->src, received->seq);
+      logFlood("received", received);
 
       if (received->dest == TOS_NODE_ID) {
          if (received->protocol == PROTOCOL_PING) {
@@ -57,12 +55,10 @@ implementation {
                      PROTOCOL_PINGREPLY, nextSequenceNumber++, (uint8_t *)received->payload,
                      PACKET_MAX_PAYLOAD_SIZE);
             remember(&sendPackage);
-            dbg(FLOODING_CHANNEL, "Node %d sent ping reply to %d seq %d\n",
-                TOS_NODE_ID, received->src, sendPackage.seq);
+            logFlood("reply originated", &sendPackage);
             flood(&sendPackage);
          } else {
-            dbg(FLOODING_CHANNEL, "Node %d received ping reply from %d seq %d\n",
-                TOS_NODE_ID, received->src, received->seq);
+            logFlood("reply received", received);
          }
       } else if (received->TTL > 1) {
          received->TTL = received->TTL - 1;
@@ -94,8 +90,15 @@ implementation {
 
    void flood(pack *p) {
       call Sender.send(*p, AM_BROADCAST_ADDR);
-      dbg(FLOODING_CHANNEL, "Node %d broadcast packet from %d seq %d\n",
-          TOS_NODE_ID, p->src, p->seq);
+      logFlood("broadcast", p);
+   }
+
+   // Added: logs every header field and the payload on the required flooding channel.
+   void logFlood(char *action, pack *p) {
+      dbg(FLOODING_CHANNEL,
+          "FLOOD %s: node=%d src=%d dst=%d seq=%d ttl=%d protocol=%d payload=%s\n",
+          action, TOS_NODE_ID, p->src, p->dest, p->seq, p->TTL,
+          p->protocol, (char *)p->payload);
    }
 
    void makePack(pack *p, uint16_t src, uint16_t dest, uint8_t ttl,
