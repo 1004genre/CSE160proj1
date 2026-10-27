@@ -57,6 +57,7 @@ implementation{
 
          input = call Pool.get();
          input->packet = msg;
+         input->src = TOS_NODE_ID;
          input->dest = dest;
 
          // Now that we have a value from the pool we can put it into our queue.
