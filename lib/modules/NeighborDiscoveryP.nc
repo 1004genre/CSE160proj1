@@ -18,6 +18,7 @@ implementation {
    uint8_t remainingBeacons[MAX_NEIGHBORS];
    uint8_t neighborCount = 0;
    void refreshNeighbor(uint16_t node);
+   void sendNeighborMessage(uint16_t destination, uint8_t kind);
 
    command void NeighborDiscovery.start() {
       call BeaconTimer.startPeriodic(BEACON_PERIOD);
@@ -80,10 +81,30 @@ implementation {
       if (len != sizeof(pack)) return msg;
       received = (pack *)payload;
       if (received->protocol == PROTOCOL_NAME && received->TTL == 1 &&
-          received->payload[0] == 'N' && received->payload[1] == 'D' &&
-          received->src != TOS_NODE_ID)
-         refreshNeighbor(received->src);
+          received->payload[0] == 'N' && received->src != TOS_NODE_ID) {
+         if (received->payload[1] == 'D') {
+            sendNeighborMessage(received->src, 'A');
+         } else if (received->payload[1] == 'A') {
+            refreshNeighbor(received->src);
+            sendNeighborMessage(received->src, 'C');
+         } else if (received->payload[1] == 'C') {
+            refreshNeighbor(received->src);
+         }
+      }
       return msg;
+   }
+
+   void sendNeighborMessage(uint16_t destination, uint8_t kind) {
+      pack message;
+      message.src = TOS_NODE_ID;
+      message.dest = destination;
+      message.seq = 0;
+      message.TTL = 1;
+      message.protocol = PROTOCOL_NAME;
+      memset(message.payload, 0, PACKET_MAX_PAYLOAD_SIZE);
+      message.payload[0] = 'N';
+      message.payload[1] = kind;
+      call Sender.send(message, destination);
    }
 
    void refreshNeighbor(uint16_t node) {
