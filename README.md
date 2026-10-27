@@ -86,3 +86,77 @@ def main():
 if __name__ == '__main__':
     main()
 ```
+
+
+# Project 2: Distance Vector Routing
+
+## Build and run
+
+From this project directory, build the TOSSIM application using the TinyOS environment:
+
+```sh
+make micaz sim
+python2 tests/project2/line.py
+```
+
+Run the other reproducible scenarios with `python2 tests/project2/alternative.py`,
+`partition.py`, `poison_reverse.py`, `capacity.py`, and
+`loss_and_ttl.py`. Run each from the repository root. The drivers add command,
+neighbor, flooding, and routing channels to standard output.
+
+Every topology lists directed radio links. Intended links list both directions.
+Nodes boot at TOSSIM time `1333 * nodeID`; the test helper waits in simulated
+seconds using `ticksPerSecond()`. Startup waits are 30 seconds, or 60 seconds
+for the 20-node packet-capacity case. Link-failure tests wait 20 seconds after
+a change: the neighbor timeout is 5 seconds, followed by staged DV exchanges.
+The lossy test waits 90 seconds before checking routes, and the TTL test injects
+a TTL-2 ping over the 3-hop line.
+
+## Routing constants and capacities
+
+* Hop-count metric; `DV_INFINITY = 16`. Finite costs are 0 through 15.
+* The route table has 256 statically allocated destination slots (IDs 0-255).
+  The neighbor table has 32 slots; excess neighbors are logged and ignored.
+* The packet remains 28 bytes, including the 8-byte network header. A DV
+  payload has a count byte and at most 9 destination/cost pairs. Larger vectors
+  are serialized into successive packets; queue-full pages are retried.
+* Neighbor discovery sends beacons every 1 second, expires a neighbor after
+  5 missed periods, and confirms bidirectional reachability with a beacon,
+  acknowledgment, and confirmation exchange.
+* Learned route freshness is per destination. A learned route expires after
+  300 seconds without an update. An unreachable entry is advertised for
+  600 seconds (multiple complete rounds at the configured capacity).
+* DV uses a separate one-hop AM type and stages one recipient-specific page
+  every 250 ms. A new advertisement round starts after the previous round
+  completes. Routing advertisements are never forwarded. Poison reverse sets
+  a destination's advertised cost to 16 for the neighbor selected as next hop.
+* Equal costs retain the currently valid next hop. A route from the current
+  next hop may increase or become unreachable; a worse route from another
+  neighbor cannot replace a valid route.
+
+The SimpleSend queue and pool each hold 20 messages per sender component.
+Ordinary pings and replies use AM type 6 and unicast next-hop sends. The
+Project 1 duplicate cache is used only by broadcast flooding. Forwarded packets
+preserve their end-to-end header and lose one TTL at each intermediate node.
+
+## Required scenario expectations
+
+* `line.py`: node 1 reaches node 4 through 2 at cost 3; the reply follows
+  routed unicast back through 3.
+* `alternative.py`: node 1 reaches 4 through 2 at cost 2, changes to a
+  cost-3 path through 3 after both 2-4 directions are removed, and returns
+  to cost 2 after restoration.
+* `partition.py`: node 1 drops the ping to 4 after the 2-3 cut converges,
+  then routes it after restoration.
+* `poison_reverse.py`: node 1 logs cost 16 for destination 4 to neighbor 2,
+  and finite cost 3 to neighbor 3.
+* `capacity.py`: the 20-node star has diameter 2 and requires multiple DV
+  packets; node 2 learns and pings node 20 from a later page.
+* `loss_and_ttl.py`: routes recover under the lossy noise model. A TTL-2 packet
+  expires at an intermediate node on the three-link path without a reply.
+
+The scripts state expected outcomes and print the required routing logs. Run
+them in the course TinyOS/TOSSIM environment and save the observed logs with
+the submission; this workspace did not include TOSSIM, so no observed results
+are claimed here. The design and discussion source documents are
+`PROJECT2_DESIGN.md` and `PROJECT2_DISCUSSION.md`.
