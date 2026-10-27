@@ -158,5 +158,6 @@ preserve their end-to-end header and lose one TTL at each intermediate node.
 The scripts state expected outcomes and print the required routing logs. Run
 them in the course TinyOS/TOSSIM environment and save the observed logs with
 the submission; this workspace did not include TOSSIM, so no observed results
-are claimed here. The design and discussion source documents are
-`PROJECT2_DESIGN.md` and `PROJECT2_DISCUSSION.md`.
+are claimed here. The design and discussion text is in `PROJECT2_DESIGN.md`
+and `PROJECT2_DISCUSSION.md`; export these sources to the required PDFs before
+submission.
