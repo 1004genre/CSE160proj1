@@ -124,8 +124,8 @@ a TTL-2 ping over the 3-hop line.
   5 missed periods, and confirms bidirectional reachability with a beacon,
   acknowledgment, and confirmation exchange.
 * Learned route freshness is per destination. A learned route expires after
-  300 seconds without an update. An unreachable entry is advertised for
-  600 seconds (multiple complete rounds at the configured capacity).
+  600 seconds without an update. An unreachable entry is advertised for
+  1200 seconds (multiple complete rounds at the configured capacity).
 * DV uses a separate one-hop AM type and stages one recipient-specific page
   every 250 ms. A new advertisement round starts after the previous round
   completes. Routing advertisements are never forwarded. Poison reverse sets
