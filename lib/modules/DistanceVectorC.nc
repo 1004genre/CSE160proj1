@@ -7,7 +7,6 @@ configuration DistanceVectorC {
 implementation {
    components DistanceVectorP;
    components new TimerMilliC() as AgeTimer;
-   components new TimerMilliC() as RoundTimer;
    components new TimerMilliC() as StageTimer;
    components new SimpleSendC(AM_ROUTING) as DVSender;
    components new AMReceiverC(AM_ROUTING) as DVReceiver;
@@ -16,7 +15,6 @@ implementation {
    DistanceVector = DistanceVectorP.DistanceVector;
    DistanceVectorP.Neighbors -> Neighbors;
    DistanceVectorP.AgeTimer -> AgeTimer;
-   DistanceVectorP.RoundTimer -> RoundTimer;
    DistanceVectorP.StageTimer -> StageTimer;
    DistanceVectorP.Sender -> DVSender;
    DistanceVectorP.Receive -> DVReceiver;
