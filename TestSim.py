@@ -5,7 +5,7 @@
 #! /usr/bin/python
 import sys
 from TOSSIM import *
-from CommandMsg import *
+from CommandMsg import *\nfrom packet import *
 
 class TestSim:
     moteids=[]
@@ -35,7 +35,7 @@ class TestSim:
     numMote=0
 
     def __init__(self):
-        self.t = Tossim([])
+        self.moteids = []\n        self.t = Tossim([])
         self.r = self.t.radio()
 
         #Create a Command Packet
