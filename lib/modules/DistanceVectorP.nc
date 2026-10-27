@@ -187,7 +187,7 @@ implementation {
       uint8_t count = 0;
       uint16_t scanned;
       uint8_t i;
-      uint8_t neighborCount = call Neighbors.count();
+      uint8_t neighborCount = call Neighbors.count();\n      error_t sendError;
       if (neighborCursor >= neighborCount) {
          roundActive = FALSE;
          return;
