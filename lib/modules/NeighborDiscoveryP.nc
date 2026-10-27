@@ -20,37 +20,51 @@ implementation {
    void refreshNeighbor(uint16_t node);
 
    command void NeighborDiscovery.start() {
-      call BeaconTimer.startPeriodic(BEACON_PERIOD); // continuously probes for direct neighbors.
+      call BeaconTimer.startPeriodic(BEACON_PERIOD);
+   }
+
+   command uint8_t NeighborDiscovery.count() {
+      return neighborCount;
+   }
+
+   command uint16_t NeighborDiscovery.neighborAt(uint8_t index) {
+      if (index >= neighborCount) return AM_BROADCAST_ADDR;
+      return neighbors[index];
+   }
+
+   command bool NeighborDiscovery.isNeighbor(uint16_t node) {
+      uint8_t i;
+      for (i = 0; i < neighborCount; i++) {
+         if (neighbors[i] == node) return TRUE;
+      }
+      return FALSE;
    }
 
    command void NeighborDiscovery.print() {
       uint8_t i;
       dbg(NEIGHBOR_CHANNEL, "Node %d neighbors:\n", TOS_NODE_ID);
-      for (i = 0; i < neighborCount; i++) {
+      for (i = 0; i < neighborCount; i++)
          dbg(NEIGHBOR_CHANNEL, "  %d\n", neighbors[i]);
-      }
    }
 
    event void BeaconTimer.fired() {
       pack beacon;
-      uint8_t i;
-      uint8_t j;
-
-      // sends an existing packet format with TTL 1, so discovery stays one hop.
+      uint8_t i, j;
       beacon.src = TOS_NODE_ID;
       beacon.dest = AM_BROADCAST_ADDR;
       beacon.seq = 0;
       beacon.TTL = 1;
       beacon.protocol = PROTOCOL_NAME;
       memset(beacon.payload, 0, PACKET_MAX_PAYLOAD_SIZE);
-      strcpy((char *)beacon.payload, "ND");
+      beacon.payload[0] = 'N';
+      beacon.payload[1] = 'D';
       call Sender.send(beacon, AM_BROADCAST_ADDR);
 
-      // expires nodes that have not refreshed their liveness countdown.
       for (i = 0; i < neighborCount; i++) {
          if (remainingBeacons[i] > 0) remainingBeacons[i]--;
          if (remainingBeacons[i] == 0) {
-            dbg(NEIGHBOR_CHANNEL, "Node %d lost neighbor %d\n", TOS_NODE_ID, neighbors[i]);
+            dbg(NEIGHBOR_CHANNEL, "Node %d lost neighbor %d\n",
+                TOS_NODE_ID, neighbors[i]);
             for (j = i; j + 1 < neighborCount; j++) {
                neighbors[j] = neighbors[j + 1];
                remainingBeacons[j] = remainingBeacons[j + 1];
@@ -65,14 +79,13 @@ implementation {
       pack *received;
       if (len != sizeof(pack)) return msg;
       received = (pack *)payload;
-      // accepts only one-hop ND beacons, not ordinary flooded packets.
-      if (received->protocol == PROTOCOL_NAME && received->TTL == 1 && strcmp((char *)received->payload, "ND") == 0 && received->src != TOS_NODE_ID) {
+      if (received->protocol == PROTOCOL_NAME && received->TTL == 1 &&
+          received->payload[0] == 'N' && received->payload[1] == 'D' &&
+          received->src != TOS_NODE_ID)
          refreshNeighbor(received->src);
-      }
       return msg;
    }
 
-   // avoids duplicate neighbors and refreshes a neighbor on each beacon.
    void refreshNeighbor(uint16_t node) {
       uint8_t i;
       for (i = 0; i < neighborCount; i++) {
@@ -85,7 +98,11 @@ implementation {
          neighbors[neighborCount] = node;
          remainingBeacons[neighborCount] = NEIGHBOR_TIMEOUT;
          neighborCount++;
-         dbg(NEIGHBOR_CHANNEL, "Node %d discovered neighbor %d\n", TOS_NODE_ID, node);
+         dbg(NEIGHBOR_CHANNEL, "Node %d discovered neighbor %d\n",
+             TOS_NODE_ID, node);
+      } else {
+         dbg(NEIGHBOR_CHANNEL, "Node %d neighbor table full; ignored %d\n",
+             TOS_NODE_ID, node);
       }
    }
 }
