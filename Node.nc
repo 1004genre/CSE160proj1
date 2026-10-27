@@ -42,7 +42,7 @@ implementation {
       received = (pack *)payload;
       if (received->protocol == PROTOCOL_PING || received->protocol == PROTOCOL_PINGREPLY) {
          // Broadcast packets belong to the separate Project 1 flooding service.
-         if (received->dest == AM_BROADCAST_ADDR) {
+         if (call AMPacket.destination(msg) == AM_BROADCAST_ADDR) {
             call Flooding.receive(received);
          } else {
             processRouted(received);
