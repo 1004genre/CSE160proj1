@@ -8,7 +8,6 @@ implementation {
     components NeighborDiscoveryC, FloodingC, DistanceVectorC;
     components new AMReceiverC(AM_PACK) as GeneralReceive;
     components new SimpleSendC(AM_PACK) as DataSender;
-    components new AMReceiverC(AM_ROUTING) as RouteReceive;
 
     Node -> MainC.Boot;
     Node.Receive -> GeneralReceive;
