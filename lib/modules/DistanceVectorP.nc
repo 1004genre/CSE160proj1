@@ -5,10 +5,9 @@ enum {
    DV_INFINITY = 16,
    DV_DESTINATIONS = 256,
    DV_ENTRIES_PER_PACKET = 9,
-   DV_UPDATE_MS = 30000,
-   DV_EXPIRE_MS = 12000,
-   DV_WITHDRAW_MS = 90000,
-   DV_STAGE_MS = 100
+   DV_EXPIRE_MS = 300000,
+   DV_WITHDRAW_MS = 600000,
+   DV_STAGE_MS = 250
 };
 
 module DistanceVectorP {
@@ -18,7 +17,6 @@ module DistanceVectorP {
    uses interface Receive;
    uses interface AMPacket;
    uses interface Timer<TMilli> as AgeTimer;
-   uses interface Timer<TMilli> as RoundTimer;
    uses interface Timer<TMilli> as StageTimer;
 }
 implementation {
@@ -52,11 +50,8 @@ implementation {
       routes[TOS_NODE_ID].cost = 0;
       routes[TOS_NODE_ID].next = TOS_NODE_ID;
       call AgeTimer.startPeriodic(1000);
-      call RoundTimer.startPeriodic(DV_UPDATE_MS);
       call StageTimer.startPeriodic(DV_STAGE_MS);
-      roundActive = TRUE;
-      neighborCursor = 0;
-      destinationCursor = 0;
+      roundActive = FALSE;
    }
 
    command bool DistanceVector.nextHop(uint16_t destination, uint16_t *next, uint8_t *cost) {
@@ -79,12 +74,6 @@ implementation {
       }
    }
 
-   event void RoundTimer.fired() {
-      roundActive = TRUE;
-      neighborCursor = 0;
-      destinationCursor = 0;
-   }
-
    event void StageTimer.fired() {
       if (roundActive) sendNextPage();
    }
@@ -92,22 +81,29 @@ implementation {
    event void AgeTimer.fired() {
       uint16_t d;
       uint8_t n;
-      if (!roundActive && call Neighbors.count() > 0) {\n         roundActive = TRUE;\n         neighborCursor = 0;\n         destinationCursor = 0;\n      }\n      for (n = 0; n < call Neighbors.count(); n++) {
+      if (!roundActive && call Neighbors.count() > 0) {
+         roundActive = TRUE;
+         neighborCursor = 0;
+         destinationCursor = 0;
+      }
+      for (n = 0; n < call Neighbors.count(); n++) {
          uint16_t id = call Neighbors.neighborAt(n);
          if (id < DV_DESTINATIONS && id != TOS_NODE_ID) {
+            bool changed = !routes[id].valid || routes[id].next != id || routes[id].cost != 1;
             routes[id].known = TRUE;
             routes[id].valid = TRUE;
             routes[id].next = id;
             routes[id].cost = 1;
             routes[id].age = 0;
             routes[id].withdrawal = 0;
+            if (changed)
+               dbg(ROUTING_CHANNEL, "Node %d route %d via %d cost 1\n", TOS_NODE_ID, id, id);
          }
       }
       for (d = 0; d < DV_DESTINATIONS; d++) {
          if (d == TOS_NODE_ID) continue;
-         if (routes[d].valid && routes[d].cost == 1 &&
-             !call Neighbors.isNeighbor(d)) {
-            invalidate(d, "neighbor expired");
+         if (routes[d].valid && !call Neighbors.isNeighbor(routes[d].next)) {
+            invalidate(d, "next hop expired");
          } else if (routes[d].valid && routes[d].cost > 1) {
             routes[d].age += 1000;
             if (routes[d].age >= DV_EXPIRE_MS)
@@ -187,7 +183,8 @@ implementation {
       uint8_t count = 0;
       uint16_t scanned;
       uint8_t i;
-      uint8_t neighborCount = call Neighbors.count();\n      error_t sendError;
+      uint8_t neighborCount = call Neighbors.count();
+      error_t sendError;
       if (neighborCursor >= neighborCount) {
          roundActive = FALSE;
          return;
@@ -217,7 +214,15 @@ implementation {
          count++;
       }
       adv.payload[0] = count;
-      call Sender.send(adv, neighbor);
+      sendError = call Sender.send(adv, neighbor);
+      if (sendError != SUCCESS) {
+         dbg(ROUTING_CHANNEL, "Node %d deferred DV page for neighbor %d (send queue full)\n",
+             TOS_NODE_ID, neighbor);
+         return;
+      }
+      for (i = 0; i < count; i++)
+         dbg(ROUTING_CHANNEL, "Node %d advert to %d: dest %d cost %d\n",
+             TOS_NODE_ID, neighbor, adv.payload[1 + 2 * i], adv.payload[2 + 2 * i]);
       destinationCursor = scanned;
       if (destinationCursor >= DV_DESTINATIONS) {
          neighborCursor++;
