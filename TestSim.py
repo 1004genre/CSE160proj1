@@ -131,7 +131,6 @@ class TestSim:
 
 if __name__ == '__main__':
     s = TestSim()
-    s.runForSeconds(1)
     s.loadTopo('long_line.topo')
     s.loadNoise('no_noise.txt')
     s.bootAll()
