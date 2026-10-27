@@ -6,7 +6,6 @@ from TestSim import TestSim
 
 def setup(topo, noise="no_noise.txt", wait=30):
     sim = TestSim()
-    sim.runForSeconds(1)
     sim.loadTopo(topo)
     sim.loadNoise(noise)
     sim.bootAll()  # bootAtTime(1333 * nodeID), in ascending mote-ID order
