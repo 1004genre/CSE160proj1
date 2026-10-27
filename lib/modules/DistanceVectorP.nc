@@ -1,6 +1,5 @@
 #include "../../includes/packet.h"
 #include "../../includes/channels.h"
-#include "../../lib/interfaces/NeighborDiscovery.nc"
 
 enum {
    DV_INFINITY = 16,
@@ -93,7 +92,7 @@ implementation {
    event void AgeTimer.fired() {
       uint16_t d;
       uint8_t n;
-      for (n = 0; n < call Neighbors.count(); n++) {
+      if (!roundActive && call Neighbors.count() > 0) {\n         roundActive = TRUE;\n         neighborCursor = 0;\n         destinationCursor = 0;\n      }\n      for (n = 0; n < call Neighbors.count(); n++) {
          uint16_t id = call Neighbors.neighborAt(n);
          if (id < DV_DESTINATIONS && id != TOS_NODE_ID) {
             routes[id].known = TRUE;
