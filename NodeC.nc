@@ -5,13 +5,18 @@
 configuration NodeC {}
 implementation {
     components MainC, Node, ActiveMessageC, CommandHandlerC;
-    components NeighborDiscoveryC, FloodingC;
+    components NeighborDiscoveryC, FloodingC, DistanceVectorC;
     components new AMReceiverC(AM_PACK) as GeneralReceive;
+    components new SimpleSendC(AM_PACK) as DataSender;
 
     Node -> MainC.Boot;
     Node.Receive -> GeneralReceive;
+    Node.AMPacket -> ActiveMessageC;
     Node.AMControl -> ActiveMessageC;
+    Node.Sender -> DataSender;
     Node.CommandHandler -> CommandHandlerC;
     Node.NeighborDiscovery -> NeighborDiscoveryC;
-    Node.Flooding -> FloodingC; // Added: wires all flood send/receive logic through FloodingC.
+    Node.Flooding -> FloodingC;
+    Node.DistanceVector -> DistanceVectorC;
+    DistanceVectorC.Neighbors -> NeighborDiscoveryC;
 }

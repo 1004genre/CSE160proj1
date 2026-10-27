@@ -1,137 +1,142 @@
-// put flooding in a different module, like neighbordiscovery
-
 #include <Timer.h>
 #include "includes/command.h"
 #include "includes/packet.h"
 #include "includes/CommandMsg.h"
-#include "includes/sendInfo.h"
 #include "includes/channels.h"
 
 module Node {
    uses interface Boot;
    uses interface SplitControl as AMControl;
    uses interface Receive;
+   uses interface AMPacket;
    uses interface SimpleSend as Sender;
    uses interface CommandHandler;
-   uses interface NeighborDiscovery; 
+   uses interface NeighborDiscovery;
+   uses interface Flooding;
+   uses interface DistanceVector;
 }
 implementation {
-   // fixed-size packet history prevents floods from circulating in cycles.
-   enum { SEEN_PACKET_COUNT = 64 };
-   typedef struct seenPacket {
-      uint16_t src;
-      uint16_t seq;
-   } seenPacket;
-
-   pack sendPackage;
-   seenPacket seenPackets[SEEN_PACKET_COUNT];
-   uint8_t seenCount = 0;
-   uint8_t nextSeenSlot = 0;
    uint16_t nextSequenceNumber = 0;
 
-   void makePack(pack *p, uint16_t src, uint16_t dest, uint8_t ttl, uint8_t protocol, uint16_t seq, uint8_t *payload, uint8_t length);
-   bool wasSeen(pack *p);
-   void remember(pack *p);
-   void flood(pack *p);
+   void makePack(pack *p, uint16_t src, uint16_t dest, uint8_t ttl,
+                 uint8_t protocol, uint16_t seq, uint8_t *payload);
+   bool sendRouted(pack *p);
+   void processRouted(pack *p);
 
    event void Boot.booted() {
       call AMControl.start();
-      call NeighborDiscovery.start(); // starts the periodic one-hop beacon timer.
+      call NeighborDiscovery.start();
+      call DistanceVector.start();
       dbg(GENERAL_CHANNEL, "Booted\n");
    }
 
    event void AMControl.startDone(error_t err) {
-      if (err == SUCCESS) {
-         dbg(GENERAL_CHANNEL, "Radio On\n");
-      } else {
-         call AMControl.start();
-      }
+      if (err == SUCCESS) dbg(GENERAL_CHANNEL, "Radio On\n");
+      else call AMControl.start();
    }
-
    event void AMControl.stopDone(error_t err) {}
 
-   // receives, suppresses duplicates, delivers, and rebroadcasts floods.
    event message_t* Receive.receive(message_t* msg, void* payload, uint8_t len) {
       pack *received;
       if (len != sizeof(pack)) return msg;
       received = (pack *)payload;
-      if (received->protocol != PROTOCOL_PING && received->protocol != PROTOCOL_PINGREPLY) return msg;
-      if (wasSeen(received)) {
-         dbg(FLOODING_CHANNEL, "Node %d dropped duplicate from %d seq %d\n", TOS_NODE_ID, received->src, received->seq);
-         return msg;
-      }
-      remember(received);
-      dbg(FLOODING_CHANNEL, "Node %d received packet from %d seq %d\n", TOS_NODE_ID, received->src, received->seq);
-      if (received->dest == TOS_NODE_ID) {
-         if (received->protocol == PROTOCOL_PING) {
-            // the destination creates and floods a reply to the original source.
-            makePack(&sendPackage, TOS_NODE_ID, received->src, MAX_TTL, PROTOCOL_PINGREPLY, nextSequenceNumber++, received->payload, PACKET_MAX_PAYLOAD_SIZE);
-            remember(&sendPackage);
-            dbg(FLOODING_CHANNEL, "Node %d sent ping reply to %d\n", TOS_NODE_ID, received->src);
-            flood(&sendPackage);
+      if (received->protocol == PROTOCOL_PING || received->protocol == PROTOCOL_PINGREPLY) {
+         // Broadcast packets belong to the separate Project 1 flooding service.
+         if (call AMPacket.destination(msg) == AM_BROADCAST_ADDR) {
+            call Flooding.receive(received);
          } else {
-            dbg(FLOODING_CHANNEL, "Node %d received ping reply from %d\n", TOS_NODE_ID, received->src);
+            processRouted(received);
          }
-      } else if (received->TTL > 1) {
-         received->TTL--;
-         flood(received);
       }
       return msg;
    }
 
-   // injects a ping as a broadcast flood instead of a direct radio send.
    event void CommandHandler.ping(uint16_t destination, uint8_t *payload) {
-      makePack(&sendPackage, TOS_NODE_ID, destination, MAX_TTL, PROTOCOL_PING, nextSequenceNumber++, payload, PACKET_MAX_PAYLOAD_SIZE);
-      remember(&sendPackage);
-      dbg(FLOODING_CHANNEL, "Node %d sent ping toward %d\n", TOS_NODE_ID, destination);
-      flood(&sendPackage);
+      pack p;
+      makePack(&p, TOS_NODE_ID, destination, MAX_TTL, PROTOCOL_PING,
+               nextSequenceNumber++, payload);
+      if (destination == TOS_NODE_ID) processRouted(&p);
+      else sendRouted(&p);
    }
 
-   event void CommandHandler.printNeighbors() {
-      call NeighborDiscovery.print(); // dumps the neighbor table for the command handler.
-   }
-   event void CommandHandler.printRouteTable() {}
+   event void CommandHandler.printNeighbors() { call NeighborDiscovery.print(); }
+   event void CommandHandler.printRouteTable() { call DistanceVector.print(); }
    event void CommandHandler.printLinkState() {}
-   event void CommandHandler.printDistanceVector() {}
+   event void CommandHandler.printDistanceVector() { call DistanceVector.print(); }
    event void CommandHandler.setTestServer() {}
    event void CommandHandler.setTestClient() {}
    event void CommandHandler.setAppServer() {}
    event void CommandHandler.setAppClient() {}
 
-   // identifies a flood using only the supplied source and sequence header fields.
-   bool wasSeen(pack *p) {
-      uint8_t i;
-      for (i = 0; i < seenCount; i++) {
-         if (seenPackets[i].src == p->src && seenPackets[i].seq == p->seq) return TRUE;
+   void processRouted(pack *p) {
+      uint16_t next;
+      uint8_t cost;
+      if (p->TTL == 0) {
+         dbg(ROUTING_CHANNEL, "Node %d dropped packet src %d dest %d seq %d: TTL expired\n",
+             TOS_NODE_ID, p->src, p->dest, p->seq);
+         return;
       }
+      if (p->dest == TOS_NODE_ID) {
+         if (p->protocol == PROTOCOL_PING) {
+            pack reply;
+            makePack(&reply, TOS_NODE_ID, p->src, MAX_TTL, PROTOCOL_PINGREPLY,
+                     nextSequenceNumber++, p->payload);
+            dbg(ROUTING_CHANNEL, "Node %d delivered ping from %d seq %d\n",
+                TOS_NODE_ID, p->src, p->seq);
+            sendRouted(&reply);
+         } else {
+            dbg(ROUTING_CHANNEL, "Node %d received ping reply from %d seq %d\n",
+                TOS_NODE_ID, p->src, p->seq);
+         }
+         return;
+      }
+      if (p->TTL <= 1) {
+         dbg(ROUTING_CHANNEL, "Node %d dropped packet src %d dest %d seq %d: TTL expired\n",
+             TOS_NODE_ID, p->src, p->dest, p->seq);
+         return;
+      }
+      if (!call DistanceVector.nextHop(p->dest, &next, &cost)) {
+         dbg(ROUTING_CHANNEL, "Node %d dropped packet src %d dest %d seq %d: no route\n",
+             TOS_NODE_ID, p->src, p->dest, p->seq);
+         return;
+      }
+      p->TTL--;
+      if (call Sender.send(*p, next) == SUCCESS)
+         dbg(ROUTING_CHANNEL,
+             "Node %d Routing Packet - src: %d, dest: %d, seq: %d, next hop: %d, cost: %d\n",
+             TOS_NODE_ID, p->src, p->dest, p->seq, next, cost);
+      else
+         dbg(ROUTING_CHANNEL, "Node %d dropped packet seq %d: send queue full\n",
+             TOS_NODE_ID, p->seq);
+   }
+
+   bool sendRouted(pack *p) {
+      uint16_t next;
+      uint8_t cost;
+      if (p->dest == TOS_NODE_ID) return FALSE;
+      if (!call DistanceVector.nextHop(p->dest, &next, &cost)) {
+         dbg(ROUTING_CHANNEL, "Node %d dropped packet src %d dest %d seq %d: no route\n",
+             TOS_NODE_ID, p->src, p->dest, p->seq);
+         return FALSE;
+      }
+      if (call Sender.send(*p, next) == SUCCESS) {
+         dbg(ROUTING_CHANNEL,
+             "Node %d Routing Packet - src: %d, dest: %d, seq: %d, next hop: %d, cost: %d\n",
+             TOS_NODE_ID, p->src, p->dest, p->seq, next, cost);
+         return TRUE;
+      }
+      dbg(ROUTING_CHANNEL, "Node %d dropped packet seq %d: send queue full\n",
+          TOS_NODE_ID, p->seq);
       return FALSE;
    }
 
-   // uses unused history slots first, then replaces entries circularly to bound memory.
-   void remember(pack *p) {
-      if (seenCount < SEEN_PACKET_COUNT) {
-         seenPackets[seenCount].src = p->src;
-         seenPackets[seenCount].seq = p->seq;
-         seenCount++;
-      } else {
-         seenPackets[nextSeenSlot].src = p->src;
-         seenPackets[nextSeenSlot].seq = p->seq;
-         nextSeenSlot = (nextSeenSlot + 1) % SEEN_PACKET_COUNT;
-      }
-   }
-
-   // xbroadcasts through SimpleSend so every directly connected node receives the flood.
-   void flood(pack *p) {
-      call Sender.send(*p, AM_BROADCAST_ADDR);
-      dbg(FLOODING_CHANNEL, "Node %d broadcast packet from %d seq %d\n", TOS_NODE_ID, p->src, p->seq);
-   }
-
-   void makePack(pack *p, uint16_t src, uint16_t dest, uint8_t ttl, uint8_t protocol, uint16_t seq, uint8_t *payload, uint8_t length) {
+   void makePack(pack *p, uint16_t src, uint16_t dest, uint8_t ttl,
+                 uint8_t protocol, uint16_t seq, uint8_t *payload) {
       p->src = src;
       p->dest = dest;
       p->TTL = ttl;
       p->seq = seq;
       p->protocol = protocol;
-      memcpy(p->payload, payload, length);
+      memcpy(p->payload, payload, PACKET_MAX_PAYLOAD_SIZE);
    }
 }
