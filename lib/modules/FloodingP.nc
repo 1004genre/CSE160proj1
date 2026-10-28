@@ -95,9 +95,9 @@ implementation {
 
    // Added: logs every header field and the payload on the required flooding channel.
    void logFlood(char *action, pack *p) {
-      dbg(FLOODING_CHANNEL,
+       dbg(FLOODING_CHANNEL,
           "FLOOD %s: node=%d src=%d dst=%d seq=%d ttl=%d protocol=%d payload=%s\n",
-          action, TOS_NODE_ID, p->src, p->dest, p->seq, p->TTL,
+           action, TOS_NODE_ID, p->src, p->dest, p->seq, p->TTL,
           p->protocol, (char *)p->payload);
    }
 

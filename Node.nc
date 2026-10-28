@@ -22,7 +22,7 @@ implementation {
 
    event void AMControl.startDone(error_t err) {
       if (err == SUCCESS) {
-         dbg(GENERAL_CHANNEL, "Radio On\n");
+         // dbg(GENERAL_CHANNEL, "Radio On\n");
       } else {
          call AMControl.start();
       }

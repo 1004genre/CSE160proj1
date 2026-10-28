@@ -50,7 +50,7 @@ implementation {
       for (i = 0; i < neighborCount; i++) {
          if (remainingBeacons[i] > 0) remainingBeacons[i]--;
          if (remainingBeacons[i] == 0) {
-            dbg(NEIGHBOR_CHANNEL, "Node %d lost neighbor %d\n", TOS_NODE_ID, neighbors[i]);
+            // dbg(NEIGHBOR_CHANNEL, "Node %d lost neighbor %d\n", TOS_NODE_ID, neighbors[i]);
             for (j = i; j + 1 < neighborCount; j++) {
                neighbors[j] = neighbors[j + 1];
                remainingBeacons[j] = remainingBeacons[j + 1];
@@ -85,7 +85,7 @@ implementation {
          neighbors[neighborCount] = node;
          remainingBeacons[neighborCount] = NEIGHBOR_TIMEOUT;
          neighborCount++;
-         dbg(NEIGHBOR_CHANNEL, "Node %d discovered neighbor %d\n", TOS_NODE_ID, node);
+          dbg(NEIGHBOR_CHANNEL, "Node %d discovered neighbor %d\n", TOS_NODE_ID, node);
       }
    }
 }

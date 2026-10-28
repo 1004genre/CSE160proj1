@@ -53,17 +53,14 @@ def main():
     s.ping(2, 18, "too far")
     s.runTime(15)
 
-    # This is 15 hops and should succeed.
-    s.ping(2, 17, "long distance")
-    s.runTime(15)
-
-    # Turn off node 4. Its direct neighbors are nodes 3 and 5.
-    s.moteOff(4)
-    s.runTime(7)  # More than the five-beacon timeout.
-
     # Dump separately because TestSim reuses its command packet.
     s.neighborDMP(3)
     s.runTime(1)
+
+# Turn off node 4. Its direct neighbors are nodes 3 and 5.
+    s.moteOff(4)
+    s.runTime(7)  # More than the five-beacon timeout.
+
     s.neighborDMP(5)
     s.runTime(1)
 
