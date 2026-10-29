@@ -109,6 +109,31 @@ Run the other reproducible scenarios with `python2 tests/project2/alternative.py
 `loss_and_ttl.py`. Run each from the repository root. Each driver creates a fresh
 simulation. The drivers add command,
 neighbor, flooding, and routing channels to standard output.
+Topology and noise files are resolved relative to the repository, so drivers
+can also be launched from `tests/project2`.
+
+The required routing metric remains hop count by default. To run the optional
+loss-aware comparison, use:
+
+```sh
+python2 tests/project2/lossy_metric.py
+```
+
+This runs the same 20 pings on the same lossy diamond topology twice: once with
+the default hop-count metric and once with the quality-aware metric. It writes
+raw debug output to `logs/quality-hop-count.log` and `logs/quality-aware.log`,
+then reports delivered pings, received replies, and the selected route. The
+metric mode is enabled on each node by the driver; other tests keep hop count.
+The comparison prints startup, convergence, and traffic progress while it runs,
+and flushes each log periodically. Each metric case runs in a separate Python
+process because TOSSIM's event scheduler may stop advancing when a second
+simulator is created in the same process. Timed runs now fail with an explicit
+error if TOSSIM reports an empty event queue instead of hanging indefinitely.
+The quality-aware result also verifies that all five nodes enabled the metric
+and that node 1's route cost is at least 16; a cost of 2 means the quality
+metric was not confirmed and the script fails instead of reporting a comparison.
+See [PROJECT2_DESIGN.md](PROJECT2_DESIGN.md) for the probe, cost, bounds,
+failure handling, and interpretation of the previously reported results.
 
 To keep raw output logs, create `logs` and redirect each scenario, for example:
 
@@ -151,6 +176,12 @@ a TTL-2 ping over the 3-hop line.
 * Equal costs retain the currently valid next hop. A route from the current
   next hop may increase or become unreachable; a worse route from another
   neighbor cannot replace a valid route.
+* Optional loss-aware mode estimates each outbound link's delivery quality
+  from sequence-matched acknowledgments to periodic neighbor beacons. It
+  converts an EWMA delivery estimate into a positive, scaled ETX link cost,
+  adds that cost to advertised route costs, and uses 255 as infinity. This mode
+  has independent bounded-cost and poison-reverse behavior; it is not enabled
+  in the required hop-count tests.
 
 The SimpleSend queue and pool each hold 20 messages per sender component.
 Ordinary pings and replies use AM type 6 and unicast next-hop sends. The
@@ -173,6 +204,10 @@ preserve their end-to-end header and lose one TTL at each intermediate node.
 * `loss_and_ttl.py`: routes recover under the lossy noise model. A TTL-2 packet
   expires at an intermediate node on the three-link path without a reply; it
   also stops node 2 and checks the resulting route loss.
+* `lossy_metric.py`: repeats identical traffic in hop-count and quality-aware
+  modes on `p2_quality.topo` with `lossy_project2.txt`, then reports the
+  delivered-packet and reply counts for comparison. The topology offers a
+  two-hop weaker path and a three-hop stronger alternative.
 
 The drivers print routing logs; compare those logs with the expectations above.
 Run them in the course TinyOS/TOSSIM environment and save the observed logs

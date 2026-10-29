@@ -1,5 +1,6 @@
 #ANDES Lab - University of California, Merced
 #! /usr/bin/python
+import os
 import sys
 from TOSSIM import *
 from CommandMsg import *
@@ -10,6 +11,7 @@ class TestSim:
     CMD_NEIGHBOR_DUMP = 1
     CMD_ROUTE_DUMP = 3
     CMD_FLOOD_PING = 7
+    CMD_ROUTING_METRIC = 8
 
     COMMAND_CHANNEL = "command"
     GENERAL_CHANNEL = "general"
@@ -30,7 +32,9 @@ class TestSim:
 
     def loadTopo(self, topoFile):
         print 'Creating Topo!'
-        f = open('topo/' + topoFile, 'r')
+        topoPath = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                'topo', topoFile)
+        f = open(topoPath, 'r')
         self.numMote = int(f.readline())
         print 'Number of Motes', self.numMote
         for line in f:
@@ -51,7 +55,9 @@ class TestSim:
         if self.numMote == 0:
             print 'Create a topo first'
             return
-        noise = open('noise/' + noiseFile, 'r')
+        noisePath = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 'noise', noiseFile)
+        noise = open(noisePath, 'r')
         for line in noise:
             value = line.strip()
             if value:
@@ -86,7 +92,10 @@ class TestSim:
     def runForSeconds(self, seconds):
         deadline = self.t.time() + int(seconds * self.t.ticksPerSecond())
         while self.t.time() < deadline:
-            self.t.runNextEvent()
+            if not self.t.runNextEvent():
+                raise RuntimeError(
+                    'TOSSIM has no pending events before the requested '
+                    'simulated-time deadline')
 
     def removeLink(self, source, destination):
         self.r.remove(source, destination)
@@ -108,6 +117,10 @@ class TestSim:
     def floodPing(self, source, destination, message):
         self.sendCMD(self.CMD_FLOOD_PING, source,
                      '{0}{1}'.format(chr(destination), message))
+
+    def setRoutingMetric(self, nodeID, qualityEnabled):
+        self.sendCMD(self.CMD_ROUTING_METRIC, nodeID,
+                     chr(1 if qualityEnabled else 0))
 
     def neighborDMP(self, destination):
         self.sendCMD(self.CMD_NEIGHBOR_DUMP, destination, 'neighbor command')

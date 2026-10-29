@@ -58,6 +58,11 @@ implementation{
                 signal CommandHandler.floodPing(buff[0], &buff[1]);
                 break;
 
+            case CMD_ROUTING_METRIC:
+                dbg(COMMAND_CHANNEL, "Command Type: Routing Metric\n");
+                signal CommandHandler.setRoutingMetric(buff[0]);
+                break;
+
             case CMD_NEIGHBOR_DUMP:
                 dbg(COMMAND_CHANNEL, "Command Type: Neighbor Dump\n");
                 signal CommandHandler.printNeighbors();

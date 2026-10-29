@@ -4,19 +4,23 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.insert(0, ROOT)
 from TestSim import TestSim
 
-def setup(topo, noise="no_noise.txt", wait=30):
+def setup(topo, noise="no_noise.txt", wait=30, output=None, channels=None):
     # Allow shorter startup waits during quick development tests.
-    wait = int(os.environ.get("P2_TEST_WAIT", wait))
+    if wait > 0:
+        wait = int(os.environ.get("P2_TEST_WAIT", wait))
 
     sim = TestSim()
     sim.loadTopo(topo)
     sim.loadNoise(noise)
     sim.bootAll()
-    sim.addChannel(sim.COMMAND_CHANNEL)
-    sim.addChannel(sim.GENERAL_CHANNEL)
-    sim.addChannel(sim.NEIGHBOR_CHANNEL)
-    sim.addChannel(sim.ROUTING_CHANNEL)
-    sim.addChannel(sim.FLOODING_CHANNEL)
+    if output is None:
+        output = sys.stdout
+    if channels is None:
+        channels = (sim.COMMAND_CHANNEL, sim.GENERAL_CHANNEL,
+                    sim.NEIGHBOR_CHANNEL, sim.ROUTING_CHANNEL,
+                    sim.FLOODING_CHANNEL)
+    for channel in channels:
+        sim.addChannel(channel, output)
     sim.runForSeconds(wait)
     return sim
 

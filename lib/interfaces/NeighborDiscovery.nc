@@ -5,4 +5,5 @@ interface NeighborDiscovery {
    command uint8_t count();
    command uint16_t neighborAt(uint8_t index);
    command bool isNeighbor(uint16_t node);
+   command uint8_t qualityCost(uint16_t node);
 }

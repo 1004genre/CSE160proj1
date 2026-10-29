@@ -4,7 +4,8 @@
 enum {
    BEACON_PERIOD = 1000,
    NEIGHBOR_TIMEOUT = 5,
-   MAX_NEIGHBORS = 32
+   MAX_NEIGHBORS = 32,
+   QUALITY_SCALE = 8
 };
 
 module NeighborDiscoveryP {
@@ -17,10 +18,17 @@ module NeighborDiscoveryP {
 implementation {
    uint16_t neighbors[MAX_NEIGHBORS];
    uint8_t remainingBeacons[MAX_NEIGHBORS];
+   uint8_t linkQuality[MAX_NEIGHBORS];
+   uint16_t pendingBeacon[MAX_NEIGHBORS];
+   bool beaconPending[MAX_NEIGHBORS];
    uint8_t neighborCount = 0;
    bool beaconTimerStarted = FALSE;
+   uint16_t nextBeaconSequence = 0;
    void refreshNeighbor(uint16_t node);
-   void sendNeighborMessage(uint16_t destination, uint8_t kind);
+   void recordBeaconResult(uint16_t node, uint16_t sequence);
+   uint8_t qualityCostForNode(uint16_t node);
+   void sendNeighborMessage(uint16_t destination, uint8_t kind,
+                            uint16_t sequence);
 
    command void NeighborDiscovery.start() {
       call BeaconTimer.startOneShot(1 + call Random.rand16() % BEACON_PERIOD);
@@ -43,25 +51,57 @@ implementation {
       return FALSE;
    }
 
+   command uint8_t NeighborDiscovery.qualityCost(uint16_t node) {
+      return qualityCostForNode(node);
+   }
+
+   uint8_t qualityCostForNode(uint16_t node) {
+      uint8_t i;
+      uint16_t cost;
+      for (i = 0; i < neighborCount; i++) {
+         if (neighbors[i] == node) {
+            if (linkQuality[i] == 0) return 255;
+            cost = (255 * QUALITY_SCALE + linkQuality[i] - 1) /
+                   linkQuality[i];
+            return cost >= 255 ? 255 : (uint8_t)cost;
+         }
+      }
+      return 255;
+   }
+
    command void NeighborDiscovery.print() {
       uint8_t i;
-      dbg(NEIGHBOR_CHANNEL, "Node %d neighbors:\n", TOS_NODE_ID);
+      dbg(NEIGHBOR_CHANNEL, "Node %d neighbors (quality 0-255):\n", TOS_NODE_ID);
       for (i = 0; i < neighborCount; i++)
-         dbg(NEIGHBOR_CHANNEL, "  %d\n", neighbors[i]);
+         dbg(NEIGHBOR_CHANNEL, "  %d quality %d cost %d\n", neighbors[i],
+             linkQuality[i], qualityCostForNode(neighbors[i]));
    }
 
    event void BeaconTimer.fired() {
       pack beacon;
       uint8_t i, j;
+      error_t sendResult;
       beacon.src = TOS_NODE_ID;
       beacon.dest = AM_BROADCAST_ADDR;
-      beacon.seq = 0;
+      beacon.seq = nextBeaconSequence++;
       beacon.TTL = 1;
       beacon.protocol = PROTOCOL_NAME;
       memset(beacon.payload, 0, PACKET_MAX_PAYLOAD_SIZE);
       beacon.payload[0] = 'N';
       beacon.payload[1] = 'D';
-      call Sender.send(beacon, AM_BROADCAST_ADDR);
+      for (i = 0; i < neighborCount; i++) {
+         if (beaconPending[i]) {
+            linkQuality[i] = ((uint16_t)linkQuality[i] * 7) / 8;
+            beaconPending[i] = FALSE;
+         }
+      }
+      sendResult = call Sender.send(beacon, AM_BROADCAST_ADDR);
+      if (sendResult == SUCCESS) {
+         for (i = 0; i < neighborCount; i++) {
+            pendingBeacon[i] = beacon.seq;
+            beaconPending[i] = TRUE;
+         }
+      }
       if (!beaconTimerStarted) {
          beaconTimerStarted = TRUE;
          call BeaconTimer.startPeriodic(BEACON_PERIOD);
@@ -75,6 +115,9 @@ implementation {
             for (j = i; j + 1 < neighborCount; j++) {
                neighbors[j] = neighbors[j + 1];
                remainingBeacons[j] = remainingBeacons[j + 1];
+               linkQuality[j] = linkQuality[j + 1];
+               pendingBeacon[j] = pendingBeacon[j + 1];
+               beaconPending[j] = beaconPending[j + 1];
             }
             neighborCount--;
             i--;
@@ -89,22 +132,24 @@ implementation {
       if (received->protocol == PROTOCOL_NAME && received->TTL == 1 &&
           received->payload[0] == 'N' && received->src != TOS_NODE_ID) {
          if (received->payload[1] == 'D') {
-            sendNeighborMessage(received->src, 'A');
+             sendNeighborMessage(received->src, 'A', received->seq);
          } else if (received->payload[1] == 'A') {
             refreshNeighbor(received->src);
-            sendNeighborMessage(received->src, 'C');
-         } else if (received->payload[1] == 'C') {
+             recordBeaconResult(received->src, received->seq);
+             sendNeighborMessage(received->src, 'C', received->seq);
+          } else if (received->payload[1] == 'C') {
             refreshNeighbor(received->src);
          }
       }
       return msg;
    }
 
-   void sendNeighborMessage(uint16_t destination, uint8_t kind) {
+   void sendNeighborMessage(uint16_t destination, uint8_t kind,
+                            uint16_t sequence) {
       pack message;
       message.src = TOS_NODE_ID;
       message.dest = destination;
-      message.seq = 0;
+      message.seq = sequence;
       message.TTL = 1;
       message.protocol = PROTOCOL_NAME;
       memset(message.payload, 0, PACKET_MAX_PAYLOAD_SIZE);
@@ -124,12 +169,27 @@ implementation {
       if (neighborCount < MAX_NEIGHBORS) {
          neighbors[neighborCount] = node;
          remainingBeacons[neighborCount] = NEIGHBOR_TIMEOUT;
+         linkQuality[neighborCount] = 255;
+         pendingBeacon[neighborCount] = 0;
+         beaconPending[neighborCount] = FALSE;
          neighborCount++;
          dbg(NEIGHBOR_CHANNEL, "Node %d discovered neighbor %d\n",
              TOS_NODE_ID, node);
       } else {
          dbg(NEIGHBOR_CHANNEL, "Node %d neighbor table full; ignored %d\n",
              TOS_NODE_ID, node);
+      }
+   }
+
+   void recordBeaconResult(uint16_t node, uint16_t sequence) {
+      uint8_t i;
+      for (i = 0; i < neighborCount; i++) {
+         if (neighbors[i] == node && beaconPending[i] &&
+             pendingBeacon[i] == sequence) {
+            linkQuality[i] = ((uint16_t)linkQuality[i] * 7 + 255) / 8;
+            beaconPending[i] = FALSE;
+            return;
+         }
       }
    }
 }

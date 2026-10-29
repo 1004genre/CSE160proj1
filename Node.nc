@@ -76,6 +76,10 @@ implementation {
       call Flooding.ping(destination, payload);
    }
 
+   event void CommandHandler.setRoutingMetric(uint8_t enabled) {
+      call DistanceVector.setQualityMetric(enabled != 0);
+   }
+
    event void CommandHandler.printNeighbors() {
       call NeighborDiscovery.print();
    }
