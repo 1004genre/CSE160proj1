@@ -13,7 +13,7 @@ implementation {
    components ActiveMessageC;
 
    DistanceVector = DistanceVectorP.DistanceVector;
-   DistanceVectorP.Neighbors -> Neighbors;
+   DistanceVectorP.Neighbors = Neighbors;
    DistanceVectorP.AgeTimer -> AgeTimer;
    DistanceVectorP.StageTimer -> StageTimer;
    DistanceVectorP.Sender -> DVSender;
