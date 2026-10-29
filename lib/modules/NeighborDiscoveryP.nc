@@ -12,16 +12,18 @@ module NeighborDiscoveryP {
    uses interface Timer<TMilli> as BeaconTimer;
    uses interface SimpleSend as Sender;
    uses interface Receive;
+   uses interface Random;
 }
 implementation {
    uint16_t neighbors[MAX_NEIGHBORS];
    uint8_t remainingBeacons[MAX_NEIGHBORS];
    uint8_t neighborCount = 0;
+   bool beaconTimerStarted = FALSE;
    void refreshNeighbor(uint16_t node);
    void sendNeighborMessage(uint16_t destination, uint8_t kind);
 
    command void NeighborDiscovery.start() {
-      call BeaconTimer.startPeriodic(BEACON_PERIOD);
+      call BeaconTimer.startOneShot(1 + call Random.rand16() % BEACON_PERIOD);
    }
 
    command uint8_t NeighborDiscovery.count() {
@@ -60,6 +62,10 @@ implementation {
       beacon.payload[0] = 'N';
       beacon.payload[1] = 'D';
       call Sender.send(beacon, AM_BROADCAST_ADDR);
+      if (!beaconTimerStarted) {
+         beaconTimerStarted = TRUE;
+         call BeaconTimer.startPeriodic(BEACON_PERIOD);
+      }
 
       for (i = 0; i < neighborCount; i++) {
          if (remainingBeacons[i] > 0) remainingBeacons[i]--;

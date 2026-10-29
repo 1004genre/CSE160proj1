@@ -72,6 +72,10 @@ implementation {
       }
    }
 
+   event void CommandHandler.floodPing(uint16_t destination, uint8_t *payload) {
+      call Flooding.ping(destination, payload);
+   }
+
    event void CommandHandler.printNeighbors() {
       call NeighborDiscovery.print();
    }

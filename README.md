@@ -51,6 +51,7 @@ as ```1 2 -53``` denotes a one-way connection from 1 to 2. To make it bidirectio
 include also ```2 1 -53```.
 
 # Running Simulations
+
 The following is an example of a simulation script.
 ```
 from TestSim import TestSim
@@ -60,7 +61,7 @@ def main():
     s = TestSim();
 
     # Before we do anything, lets simulate the network off.
-    s.runTime(1);
+    s.runForSeconds(1);
 
     # Load the the layout of the network.
     s.loadTopo("long_line.topo");
@@ -76,17 +77,21 @@ def main():
     s.addChannel(s.GENERAL_CHANNEL);
 
     # After sending a ping, simulate a little to prevent collision.
-    s.runTime(1);
+    s.runForSeconds(1);
     s.ping(1, 2, "Hello, World");
-    s.runTime(1);
+    s.runForSeconds(1);
 
     s.ping(1, 10, "Hi!");
-    s.runTime(1);
+    s.runForSeconds(1);
 
 if __name__ == '__main__':
     main()
 ```
 
+For Project 1 broadcast flooding, run `python2 pingTest.py`. The `ping`
+command is Project 2 routed unicast; `TestSim.floodPing(source, destination,
+message)` sends the separate Project 1 flood command. This keeps flooding
+available without causing ordinary routed packets to fall back to broadcasts.
 
 # Project 2: Distance Vector Routing
 
@@ -101,8 +106,19 @@ python2 tests/project2/line.py
 
 Run the other reproducible scenarios with `python2 tests/project2/alternative.py`,
 `partition.py`, `poison_reverse.py`, `capacity.py`, and
-`loss_and_ttl.py`. Run each from the repository root. The drivers add command,
+`loss_and_ttl.py`. Run each from the repository root. Each driver creates a fresh
+simulation. The drivers add command,
 neighbor, flooding, and routing channels to standard output.
+
+To keep raw output logs, create `logs` and redirect each scenario, for example:
+
+```sh
+mkdir -p logs
+python2 tests/project2/line.py > logs/line.log 2>&1
+```
+
+Repeat with each scenario's filename. Run
+`python2 pingTest.py > logs/flooding.log 2>&1` to capture the Project 1 flood.
 
 Every topology lists directed radio links. Intended links list both directions.
 Nodes boot at TOSSIM time `1333 * nodeID`; the test helper waits in simulated
@@ -120,12 +136,14 @@ a TTL-2 ping over the 3-hop line.
 * The packet remains 28 bytes, including the 8-byte network header. A DV
   payload has a count byte and at most 9 destination/cost pairs. Larger vectors
   are serialized into successive packets; queue-full pages are retried.
-* Neighbor discovery sends beacons every 1 second, expires a neighbor after
-  5 missed periods, and confirms bidirectional reachability with a beacon,
-  acknowledgment, and confirmation exchange.
+* Neighbor discovery sends beacons every 1 second after a randomized initial
+  delay, expires a neighbor after 5 missed periods, and confirms bidirectional
+  reachability with a beacon, acknowledgment, and confirmation exchange.
 * Learned route freshness is per destination. A learned route expires after
-  600 seconds without an update. An unreachable entry is advertised for
-  1200 seconds (multiple complete rounds at the configured capacity).
+  300 seconds without an update, enough for a full staged advertisement round
+  at the configured neighbor and route-table capacities. An unreachable entry
+  is advertised for 1200 seconds (multiple complete rounds at the configured
+  capacity). Initial routing timer startup is randomized.
 * DV uses a separate one-hop AM type and stages one recipient-specific page
   every 250 ms. A new advertisement round starts after the previous round
   completes. Routing advertisements are never forwarded. Poison reverse sets
@@ -153,11 +171,13 @@ preserve their end-to-end header and lose one TTL at each intermediate node.
 * `capacity.py`: the 20-node star has diameter 2 and requires multiple DV
   packets; node 2 learns and pings node 20 from a later page.
 * `loss_and_ttl.py`: routes recover under the lossy noise model. A TTL-2 packet
-  expires at an intermediate node on the three-link path without a reply.
+  expires at an intermediate node on the three-link path without a reply; it
+  also stops node 2 and checks the resulting route loss.
 
-The scripts state expected outcomes and print the required routing logs. Run
-them in the course TinyOS/TOSSIM environment and save the observed logs with
-the submission; this workspace did not include TOSSIM, so no observed results
-are claimed here. The design and discussion text is in `PROJECT2_DESIGN.md`
-and `PROJECT2_DISCUSSION.md`; export these sources to the required PDFs before
-submission.
+The drivers print routing logs; compare those logs with the expectations above.
+Run them in the course TinyOS/TOSSIM environment and save the observed logs
+with the submission.
+`TestSim.injectRoutedPing` compensates for its test packet being delivered to
+the source as a received frame, so the source does not consume an extra TTL
+relative to the requested value. The design and discussion PDFs are included
+beside their Markdown sources.

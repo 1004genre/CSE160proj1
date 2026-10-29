@@ -19,3 +19,14 @@ def setup(topo, noise="no_noise.txt", wait=30):
     sim.addChannel(sim.FLOODING_CHANNEL)
     sim.runForSeconds(wait)
     return sim
+
+
+def dump_routes(sim, nodes):
+    for node in nodes:
+        sim.routeDMP(node)
+        sim.runForSeconds(1)
+
+
+def routed_ping(sim, source, destination, message, wait=10):
+    sim.ping(source, destination, message)
+    sim.runForSeconds(wait)

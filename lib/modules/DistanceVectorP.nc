@@ -5,7 +5,7 @@ enum {
    DV_INFINITY = 16,
    DV_DESTINATIONS = 256,
    DV_ENTRIES_PER_PACKET = 9,
-   DV_EXPIRE_MS = 600000,
+   DV_EXPIRE_MS = 300000,
    DV_WITHDRAW_MS = 1200000,
    DV_STAGE_MS = 250
 };
@@ -18,6 +18,7 @@ module DistanceVectorP {
    uses interface AMPacket;
    uses interface Timer<TMilli> as AgeTimer;
    uses interface Timer<TMilli> as StageTimer;
+   uses interface Random;
 }
 implementation {
    typedef struct routeEntry {
@@ -33,6 +34,7 @@ implementation {
    bool roundActive = FALSE;
    uint8_t neighborCursor = 0;
    uint16_t destinationCursor = 0;
+   bool ageTimerStarted = FALSE;
 
    void invalidate(uint16_t dest, const char *reason);
    void sendNextPage();
@@ -49,7 +51,7 @@ implementation {
       routes[TOS_NODE_ID].valid = TRUE;
       routes[TOS_NODE_ID].cost = 0;
       routes[TOS_NODE_ID].next = TOS_NODE_ID;
-      call AgeTimer.startPeriodic(1000);
+      call AgeTimer.startOneShot(1 + call Random.rand16() % 1000);
       call StageTimer.startPeriodic(DV_STAGE_MS);
       roundActive = FALSE;
    }
@@ -117,6 +119,10 @@ implementation {
                routes[d].withdrawal -= 1000;
             }
          }
+      }
+      if (!ageTimerStarted) {
+         ageTimerStarted = TRUE;
+         call AgeTimer.startPeriodic(1000);
       }
    }
 

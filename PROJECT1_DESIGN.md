@@ -26,7 +26,9 @@ The `seenPacket` record stores a packets original source and sequence details in
 
 ### Starting a ping
 
-My `CommandHandler.ping` implementation creates a `PROTOCOL_PING` packet with:
+The `CMD_FLOOD_PING` command is handled by `CommandHandler.floodPing`; it
+passes the requested destination and payload to `Flooding.ping`. The flooding
+service creates a `PROTOCOL_PING` packet with:
 
 - the local node as `src`
 - the command's target as `dest`
@@ -64,4 +66,3 @@ To record a valid `ND` signal, `refreshNeighbor()` either adds the sender or res
 ## Flooding module files
 
 `Flooding.nc` acts as the boundary between `Node` and flooding. Node can start a ping or pass a received packet to it. `FloodingC.nc` wires the protocol to the queued sender. `FloodingP.nc` contains the flooding implementation that has sequence numbers, duplicate history, broadcasts, TTL forwarding, and ping replies. This keeps `Node.nc` as a dispatcher.
-

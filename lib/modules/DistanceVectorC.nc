@@ -11,6 +11,7 @@ implementation {
    components new SimpleSendC(AM_ROUTING) as DVSender;
    components new AMReceiverC(AM_ROUTING) as DVReceiver;
    components ActiveMessageC;
+   components RandomC;
 
    DistanceVector = DistanceVectorP.DistanceVector;
    DistanceVectorP.Neighbors = Neighbors;
@@ -19,4 +20,5 @@ implementation {
    DistanceVectorP.Sender -> DVSender;
    DistanceVectorP.Receive -> DVReceiver;
    DistanceVectorP.AMPacket -> ActiveMessageC;
+   DistanceVectorP.Random -> RandomC;
 }

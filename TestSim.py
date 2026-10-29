@@ -9,6 +9,7 @@ class TestSim:
     CMD_PING = 0
     CMD_NEIGHBOR_DUMP = 1
     CMD_ROUTE_DUMP = 3
+    CMD_FLOOD_PING = 7
 
     COMMAND_CHANNEL = "command"
     GENERAL_CHANNEL = "general"
@@ -104,19 +105,26 @@ class TestSim:
     def ping(self, source, destination, message):
         self.sendCMD(self.CMD_PING, source, '{0}{1}'.format(chr(destination), message))
 
+    def floodPing(self, source, destination, message):
+        self.sendCMD(self.CMD_FLOOD_PING, source,
+                     '{0}{1}'.format(chr(destination), message))
+
     def neighborDMP(self, destination):
         self.sendCMD(self.CMD_NEIGHBOR_DUMP, destination, 'neighbor command')
 
     def routeDMP(self, destination):
         self.sendCMD(self.CMD_ROUTE_DUMP, destination, 'routing command')
 
-    # Inject an IP packet at its source with a test TTL.
+    # The injected frame is processed as received by the source, so add one
+    # to compensate for the source's normal forwarding decrement.
     def injectRoutedPing(self, source, destination, ttl, seq=500):
+        if ttl < 1 or ttl >= 255:
+            raise ValueError('TTL must be between 1 and 254')
         message = pack()
         message.set_dest(destination)
         message.set_src(source)
         message.set_seq(seq)
-        message.set_TTL(ttl)
+        message.set_TTL(ttl + 1)
         message.set_protocol(0)
         message.set_payload([0] * 20)
         packet = self.t.newPacket()

@@ -53,6 +53,11 @@ implementation{
                 signal CommandHandler.ping(buff[0], &buff[1]);
                 break;
 
+            case CMD_FLOOD_PING:
+                dbg(COMMAND_CHANNEL, "Command Type: Flood Ping\n");
+                signal CommandHandler.floodPing(buff[0], &buff[1]);
+                break;
+
             case CMD_NEIGHBOR_DUMP:
                 dbg(COMMAND_CHANNEL, "Command Type: Neighbor Dump\n");
                 signal CommandHandler.printNeighbors();
