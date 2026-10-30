@@ -44,6 +44,7 @@ implementation {
    uint8_t linkCost(uint16_t neighbor);
    void updateNeighborRoutes();
 
+   // Initialize the self-route and start randomized route-aging timers.
    command void DistanceVector.start() {
       uint16_t i;
       for (i = 0; i < DV_DESTINATIONS; i++) {
@@ -62,6 +63,7 @@ implementation {
       roundActive = FALSE;
    }
 
+   // Change metric modes by clearing learned routes and rebuilding direct routes.
    command void DistanceVector.setQualityMetric(bool enabled) {
       uint16_t i;
       if (qualityMetricEnabled == enabled) return;
@@ -84,6 +86,7 @@ implementation {
           TOS_NODE_ID, qualityMetricEnabled);
    }
 
+   // Return a destination's usable next hop and selected path cost.
    command bool DistanceVector.nextHop(uint16_t destination, uint16_t *next, uint8_t *cost) {
       if (destination >= DV_DESTINATIONS || !routes[destination].valid) return FALSE;
       *next = routes[destination].next;
@@ -91,6 +94,7 @@ implementation {
       return TRUE;
    }
 
+   // Print valid and unreachable entries for the route-table command.
    command void DistanceVector.print() {
       uint16_t d;
       dbg(ROUTING_CHANNEL, "Node %d routing table\nDest NextHop Cost State\n", TOS_NODE_ID);
@@ -104,10 +108,12 @@ implementation {
       }
    }
 
+   // Send the next bounded advertisement page during an active DV round.
    event void StageTimer.fired() {
       if (roundActive) sendNextPage();
    }
 
+   // Refresh direct routes, expire stale routes, and reclaim old withdrawals.
    event void AgeTimer.fired() {
       uint16_t d;
       if (!roundActive && call Neighbors.count() > 0) {
@@ -140,6 +146,7 @@ implementation {
       }
    }
 
+   // Validate one-hop DV advertisements and update routes from the link source.
    event message_t* Receive.receive(message_t* msg, void* payload, uint8_t len) {
       pack *adv = (pack *)payload;
       uint16_t sender;
@@ -203,6 +210,7 @@ implementation {
       return msg;
    }
 
+   // Mark a route unusable while retaining it for a timed INFINITY withdrawal.
    void invalidate(uint16_t dest, const char *reason) {
       if (dest == TOS_NODE_ID || !routes[dest].valid) return;
       routes[dest].valid = FALSE;
@@ -213,6 +221,7 @@ implementation {
       dbg(ROUTING_CHANNEL, "Node %d route %d unreachable (%s)\n", TOS_NODE_ID, dest, reason);
    }
 
+   // Serialize one bounded, recipient-specific DV page with poison reverse.
    void sendNextPage() {
       pack adv;
       uint16_t neighbor;
@@ -266,14 +275,17 @@ implementation {
       }
    }
 
+   // Select the unreachable value for the active routing metric.
    uint8_t infinityCost() {
       return qualityMetricEnabled ? DV_QUALITY_INFINITY : DV_INFINITY;
    }
 
+   // Use unit hop cost by default or measured link cost in quality mode.
    uint8_t linkCost(uint16_t neighbor) {
       return qualityMetricEnabled ? call Neighbors.qualityCost(neighbor) : 1;
    }
 
+   // Install or refresh direct routes to currently confirmed neighbors.
    void updateNeighborRoutes() {
       uint8_t n;
       uint8_t infinity = infinityCost();

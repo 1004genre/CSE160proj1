@@ -30,6 +30,7 @@ implementation {
    void sendNeighborMessage(uint16_t destination, uint8_t kind,
                             uint16_t sequence);
 
+   // Start periodic neighbor probes after a randomized initial delay.
    command void NeighborDiscovery.start() {
       call BeaconTimer.startOneShot(1 + call Random.rand16() % BEACON_PERIOD);
    }
@@ -55,6 +56,7 @@ implementation {
       return qualityCostForNode(node);
    }
 
+   // Convert the smoothed beacon delivery score into a bounded ETX-like cost.
    uint8_t qualityCostForNode(uint16_t node) {
       uint8_t i;
       uint16_t cost;
@@ -77,6 +79,7 @@ implementation {
              linkQuality[i], qualityCostForNode(neighbors[i]));
    }
 
+   // Probe neighbors, decay missed acknowledgments, and expire inactive links.
    event void BeaconTimer.fired() {
       pack beacon;
       uint8_t i, j;
@@ -125,6 +128,7 @@ implementation {
       }
    }
 
+   // Handle beacon/ack/confirmation exchange and record matching probe results.
    event message_t* Receive.receive(message_t* msg, void* payload, uint8_t len) {
       pack *received;
       if (len != sizeof(pack)) return msg;
@@ -144,6 +148,7 @@ implementation {
       return msg;
    }
 
+   // Send one-hop neighbor-discovery control messages with the probe sequence.
    void sendNeighborMessage(uint16_t destination, uint8_t kind,
                             uint16_t sequence) {
       pack message;
@@ -158,6 +163,7 @@ implementation {
       call Sender.send(message, destination);
    }
 
+   // Refresh an active neighbor or add it if the bounded table has space.
    void refreshNeighbor(uint16_t node) {
       uint8_t i;
       for (i = 0; i < neighborCount; i++) {
@@ -181,6 +187,7 @@ implementation {
       }
    }
 
+   // Update the link-quality EWMA only for the matching beacon acknowledgment.
    void recordBeaconResult(uint16_t node, uint16_t sequence) {
       uint8_t i;
       for (i = 0; i < neighborCount; i++) {

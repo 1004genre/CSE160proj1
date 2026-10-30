@@ -19,6 +19,7 @@ module CommandHandlerP{
 }
 
 implementation{
+    // Dispatch queued simulator commands, including routing metric selection.
     task void processCommand(){
         if(! call Queue.empty()){
             CommandMsg *msg;
@@ -99,6 +100,7 @@ implementation{
             post processCommand();
         }
     }
+    // Queue incoming simulator commands for processCommand to handle safely.
     event message_t* Receive.receive(message_t* raw_msg, void* payload, uint8_t len){
         if (! call Pool.empty()){
             call Queue.enqueue(raw_msg);

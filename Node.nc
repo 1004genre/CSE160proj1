@@ -24,6 +24,7 @@ implementation {
    bool sendRouted(pack *p);
    void processRouted(pack *p);
 
+   // Start radio, neighbor discovery, and distance-vector routing at boot.
    event void Boot.booted() {
       call AMControl.start();
       call NeighborDiscovery.start();
@@ -41,6 +42,7 @@ implementation {
 
    event void AMControl.stopDone(error_t err) {}
 
+   // Keep broadcast flooding separate from unicast routed packet handling.
    event message_t* Receive.receive(message_t* msg, void* payload, uint8_t len) {
       pack *received;
 
@@ -59,6 +61,7 @@ implementation {
       return msg;
    }
 
+   // Create a routed ping and either deliver it locally or send it by route.
    event void CommandHandler.ping(uint16_t destination, uint8_t *payload) {
       pack p;
 
@@ -72,10 +75,12 @@ implementation {
       }
    }
 
+   // Preserve the Project 1 flood command as a separate traffic path.
    event void CommandHandler.floodPing(uint16_t destination, uint8_t *payload) {
       call Flooding.ping(destination, payload);
    }
 
+   // Forward the command that enables or disables the optional quality metric.
    event void CommandHandler.setRoutingMetric(uint8_t enabled) {
       call DistanceVector.setQualityMetric(enabled != 0);
    }
@@ -97,6 +102,7 @@ implementation {
    event void CommandHandler.setAppServer() {}
    event void CommandHandler.setAppClient() {}
 
+   // Deliver locally or forward a unicast packet with TTL and route checks.
    void processRouted(pack *p) {
       uint16_t next;
       uint8_t cost;
@@ -153,6 +159,7 @@ implementation {
       }
    }
 
+   // Send a locally originated packet or ping reply to its selected next hop.
    bool sendRouted(pack *p) {
       uint16_t next;
       uint8_t cost;
@@ -179,6 +186,7 @@ implementation {
       return FALSE;
    }
 
+   // Initialize the end-to-end network header and copy the fixed-size payload.
    void makePack(pack *p, uint16_t src, uint16_t dest, uint8_t ttl,
                  uint8_t protocol, uint16_t seq, uint8_t *payload) {
       p->src = src;
