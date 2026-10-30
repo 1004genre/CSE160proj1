@@ -53,6 +53,7 @@ implementation {
          routes[i].withdrawal = 0;
          routes[i].age = 0;
       }
+      // The self-route is set at boot and never expires, but it is not advertised to neighbors.
       routes[TOS_NODE_ID].known = TRUE;
       routes[TOS_NODE_ID].valid = TRUE;
       routes[TOS_NODE_ID].cost = 0;
@@ -95,6 +96,7 @@ implementation {
    }
 
    // Print valid and unreachable entries for the route-table command.
+   // A beacon goes out to all neighbors, but only if there is at least one neighbor.
    command void DistanceVector.print() {
       uint16_t d;
       dbg(ROUTING_CHANNEL, "Node %d routing table\nDest NextHop Cost State\n", TOS_NODE_ID);
@@ -147,6 +149,7 @@ implementation {
    }
 
    // Validate one-hop DV advertisements and update routes from the link source.
+   // A hearer replies with a ping if the advertisement is a ping request.
    event message_t* Receive.receive(message_t* msg, void* payload, uint8_t len) {
       pack *adv = (pack *)payload;
       uint16_t sender;
@@ -281,6 +284,8 @@ implementation {
    }
 
    // Use unit hop cost by default or measured link cost in quality mode.
+   // Installs a direct cost 1 route to each confirmed neighbor, 
+   // and invalidates any direct route whose link cost exceeds the selected infinity value.
    uint8_t linkCost(uint16_t neighbor) {
       return qualityMetricEnabled ? call Neighbors.qualityCost(neighbor) : 1;
    }
