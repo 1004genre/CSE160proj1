@@ -1,4 +1,3 @@
-stdin: is not a tty
 0:0:0.560654094 DEBUG (4): Node 4 discovered neighbor 3
 0:0:0.719696430 DEBUG (2): Node 2 discovered neighbor 3
 0:0:0.755157593 DEBUG (2): Node 2 discovered neighbor 1
