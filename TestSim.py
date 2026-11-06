@@ -104,6 +104,11 @@ class TestSim:
         self.r.add(source, destination, gain)
 
     def sendCMD(self, commandID, destination, payloadString):
+        max_payload_length = self.msg.numElements_payload(0) - 1
+        if len(payloadString) > max_payload_length:
+            raise ValueError(
+                'Command payload must be at most {0} bytes including its '
+                'null terminator'.format(max_payload_length + 1))
         self.msg.set_dest(destination)
         self.msg.set_id(commandID)
         self.msg.setString_payload(payloadString)
