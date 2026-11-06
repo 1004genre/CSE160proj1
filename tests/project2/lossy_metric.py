@@ -46,6 +46,7 @@ def run_simulation(quality_metric, log_path):
         if quality_metric:
             for node in range(1, 6):
                 sim.setRoutingMetric(node, True)
+                sim.runForSeconds(1)
             advance(sim, METRIC_CONVERGENCE_WAIT,
                     "Quality metric convergence", output)
         sim.neighborDMP(1)
@@ -72,6 +73,16 @@ def parse_result(quality_metric, log_name):
     with open(log_path, "r") as log_file:
         log = log_file.read()
 
+    if quality_metric:
+        enabled_nodes = re.findall(
+            r"Node (\d+) quality metric enabled 1", log)
+        expected_nodes = set(str(node) for node in range(1, 6))
+        if len(enabled_nodes) != 5 or set(enabled_nodes) != expected_nodes:
+            raise RuntimeError(
+                "Expected quality metric enablement on nodes 1-5; found "
+                "%d enablement lines for nodes %s in %s" %
+                (len(enabled_nodes), sorted(set(enabled_nodes)), log_path))
+
     delivered = len(re.findall(r"Node 4 delivered ping from 1 seq \d+", log))
     replies = len(re.findall(r"Node 1 received ping reply from 4 seq \d+", log))
     routes = re.findall(r"DEBUG \(1\): 4 (\d+) (\d+) VALID", log)
@@ -79,6 +90,10 @@ def parse_result(quality_metric, log_name):
         raise RuntimeError("No valid route to node 4 found in %s" % log_path)
     next_hop = int(routes[-1][0])
     cost = int(routes[-1][1])
+    if quality_metric and cost < 16:
+        raise RuntimeError(
+            "Quality-aware route to node 4 has cost %d; expected at least "
+            "16 in %s" % (cost, log_path))
 
     return {
         "mode": "quality-aware" if quality_metric else "hop-count",

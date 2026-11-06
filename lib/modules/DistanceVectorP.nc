@@ -224,7 +224,7 @@ implementation {
       dbg(ROUTING_CHANNEL, "Node %d route %d unreachable (%s)\n", TOS_NODE_ID, dest, reason);
    }
 
-   // Serialize one bounded, recipient-specific DV page with poison reverse.
+   // Serialize one bounded, recipient-specific distance vector page with poison reverse.
    void sendNextPage() {
       pack adv;
       uint16_t neighbor;
