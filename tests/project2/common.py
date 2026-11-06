@@ -163,13 +163,12 @@ class Scenario(object):
 
     def tables(self, nodes):
         pos = self.mark()
-        # Process each dump before issuing the next command. Commands sent
-        # back-to-back can overwrite one another in the simulator queue.
+        # Process each dump before issuing the next command.
         for n in nodes:
             self.sim.routeDMP(n)
             self.run(1)
         return parse_tables(self.since(pos))
-
+    
     def ping(self, src, dst, label, wait=10):
         self.say("t=%5.1fs  command: ping %d -> %d (\"%s\"), wait %ds" % (self.now(), src, dst, label, wait))
         pos = self.mark()
