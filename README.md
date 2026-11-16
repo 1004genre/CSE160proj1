@@ -236,3 +236,27 @@ with the submission.
 the source as a received frame, so the source does not consume an extra TTL
 relative to the requested value. The design and discussion PDFs are included
 beside their Markdown sources.
+
+# Project 3 mid-review: reliable transport
+
+Build the isolated Project 3 application and run its three-node mid-review
+demo from the repository root:
+
+```sh
+make micaz sim COMPONENT=Project3C
+python2 tests/project3/mid_review.py
+```
+
+The test starts a listener on node 3, connects from node 1 over
+`topo/p3_midreview.topo`, transfers the byte pattern `0..31` using
+stop-and-wait, then performs an orderly close. It checks connection-state
+transitions, byte verification, and cleanup. Detailed output is saved to
+`logs/project3-mid-review.log`.
+
+Project 3 uses the existing 28-byte network packet: an 8-byte network header
+and 20-byte payload. Its 9-byte transport header leaves 11 data bytes per
+segment; it does not increase the MTU. The current implementation is the
+mid-review slice only. Sliding-window transfer, receiver flow control,
+concurrent-connection tests, and deterministic loss validation remain future
+work. See `PROJECT3_DESIGN.md` for the staged implementation and final test
+matrix.

@@ -4,11 +4,14 @@
 
 - Project 2 has a separate distance-vector build and multi-hop routing path.
 - `lib/interfaces/Transport.nc` defines the transport API, and
-  `includes/socket.h` provides a starter socket record.
-- There is no transport implementation, TCP packet format, Project 3 test
-  generator/consumer, or transport test suite yet.
-- The current network receive path handles ping and routing traffic; Project 3
-  must add `PROTOCOL_TCP` dispatch and send through the normal routed path.
+  `includes/socket.h` defines the bounded connection records.
+- `Project3C` / `Project3Node` and `TransportP` now implement the mid-review
+  setup, stop-and-wait data transfer, and orderly-close path over routed
+  `PROTOCOL_TCP` packets.
+- `tests/project3/mid_review.py` exercises a three-node line and checks the
+  handshake, byte-exact 32-byte transfer, and close. Sliding windows,
+  receiver-driven flow control, concurrent active connections, and loss
+  injection are still future work.
 
 ## Mid-review target
 
@@ -30,9 +33,9 @@ same engine.
 
 ## Proposed architecture and invariants
 
-- Add `Project3C` / `Project3Node` as the application build, preserving the
-  Project 2 build. Wire a `TransportC` service to the existing command and
-  network layers.
+- `Project3C` / `Project3Node` is the application build, preserving the
+  Project 2 build. `TransportP` uses the network-send interface and the
+  existing command/routing layers.
 - Transport sends `PROTOCOL_TCP` packets through network forwarding and
   distance-vector next-hop lookup. It never floods transport packets or calls
   the radio directly. Every retransmission gets a fresh network TTL and packet
@@ -45,15 +48,16 @@ same engine.
   sequence positions and byte counts with widths that can represent the full
   supported transfer; do not use byte-sized counters for cumulative sequence
   positions.
-- Initial transport header proposal: source port, destination port, flags,
-  sequence, acknowledgment, and advertised window. Derive data length from the
-  validated network payload length if the format permits. Use network-byte-
-  order fields and check encoded sizes.
-- **Before freezing the header**, measure the compiled `pack` and transport
-  sizes. The assignment specifies a 29-byte packet-payload budget, while the
-  current Project 2 build uses `TOSH_DATA_LENGTH=28` and an 8-byte network
-  header. Resolve this against the course TinyOS configuration; do not increase
-  the MTU. Document the actual combined overhead and resulting data capacity.
+- The implemented transport header contains source and destination ports,
+  flags, data length, 16-bit sequence and acknowledgment numbers, and an
+  advertised receive window. The encoded header is 9 bytes; the fixed 20-byte
+  network payload therefore carries at most 11 data bytes per segment.
+- The Project 3 build reports `sizeof(pack)=28` and
+  `sizeof(tcp_segment_t)=20`: an 8-byte network header plus 9-byte transport
+  header leaves 11 bytes for data. This honors the existing
+  `TOSH_DATA_LENGTH=28`; the assignment's 29-byte budget wording remains a
+  configuration discrepancy to confirm before final submission. No MTU
+  increase is made.
 - Start with a documented no-wrap sequence range for required tests. Keep
   network packet IDs distinct from transport byte sequence numbers.
 - Maintain these invariants: acknowledged bytes never exceed sent bytes;
@@ -74,20 +78,22 @@ same engine.
 | Client receives peer FIN | Send final ACK; retain closing state for duplicate FINs | TIME_WAIT |
 | Retry budget exhausted | Report failure and release bounded state safely | CLOSED |
 
-Use one fixed retransmission timeout initially, with a bounded retry count and
-explicit failure reporting. A starting value of 2 seconds and five retries is a
-testable proposal, not a final constant: measure it against the existing
-per-hop send delay and stable multi-hop route before locking it. Duplicate SYN,
-SYN-ACK, FIN, and final-ACK-loss cases must be idempotent.
+The mid-review implementation uses a fixed 3-second retransmission timeout,
+five retransmissions, and explicit failure reporting. It was exercised on the
+two-hop demo route; calibrate it again for longer routes and loss scenarios.
+Duplicate SYN and data packets are handled idempotently; expand tests for
+duplicate FIN and lost final ACK during the full-project stages. The client
+retains its TIME_WAIT record for 6 seconds (twice the current RTO) so it can
+acknowledge a retransmitted FIN if the first final ACK is lost.
 
 ## Work plan
 
 | Stage | Work | Exit check |
 |---|---|---|
-| 0. Packet and routing boundary | Confirm MTU; define/encode TCP header; add routed TCP send and receive dispatch; add `Project3C` | Compile; packet-size checks pass; ordinary Project 2 ping still passes |
-| 1. Connection setup | Static tuple-indexed records, persistent listener, SYN/SYN-ACK/ACK, duplicate handling, handshake timeout | Repeatable 1-2-3 handshake; no duplicate child allocation |
-| 2. Stop-and-wait data | Incremental producer, retained send bytes, in-order receiver, cumulative ACK, duplicate suppression, data timeout | Short transfer is byte-exact; dropped data recovers; duplicate delivery is zero |
-| 3. Orderly close | Client drains data before FIN; peer FIN/final ACK; retry and closing-state retention | Mid-review demo completes setup, data start, and teardown with state logs |
+| 0. Packet and routing boundary (implemented) | Confirm current packet size; encode the TCP header; add routed TCP dispatch and `Project3C` | Project 3 builds; compiled packet/segment sizes are logged; Project 1/2 builds remain valid |
+| 1. Connection setup (implemented) | Static tuple-indexed records, persistent listener, SYN/SYN-ACK/ACK, duplicate SYN handling, handshake retry | Repeatable 1-2-3 handshake; listener remains available |
+| 2. Stop-and-wait data (implemented) | Retained 128-byte send buffer, 11-byte segments, in-order receiver, cumulative ACK, duplicate suppression, data retry | Demo transfers 32 bytes byte-exactly over 1-2-3 |
+| 3. Orderly close (implemented) | Drain data before FIN; peer FIN/final ACK; bounded retry and TIME_WAIT cleanup | Mid-review script completes setup, transfer, and teardown with state logs |
 | 4. Fixed sliding window | Multiple outstanding segments; sender bounded by configured and advertised windows; partial segments; ACK validation | At least two outstanding segments; byte-exact transfer of at least 1,024 bytes |
 | 5. Receive flow control | 128-byte receive occupancy; test consumer pauses/resumes; window update/probe for lost reopening update | Sender stops at zero window, resumes, and receiver never overflows |
 | 6. Independent connections and failure | Two simultaneous connection records; fair bounded work; unavailable-listener and retry-exhaustion cleanup | One connection’s pause/timeout does not block another; all failures release state |
@@ -145,22 +151,15 @@ reliability, sliding-window, flow-control, and cleanup behavior is validated.
 
 ## Mid-review demo procedure
 
-1. Build `Project3C`; load a stable bidirectional 1-2-3 topology and no-noise
-   model; boot nodes and wait for Project 2 routes.
-2. Run the server command at node 3 and the client command at node 1 using a
-   distinct port pair. Show that the listener remains available while its
-   connected child is established.
-3. Transfer a short pattern such as bytes `0..31`; show sequence starts, ACKs,
-   accepted/acknowledged/consumed totals, and exact receiver verification.
-4. Request client close; show FIN/ACK state transitions and bounded cleanup.
-5. Explain the current record fields and fixed retry policy, then describe how
-   the next stage adds multiple outstanding byte ranges and the advertised
-   receive window.
+Run `make micaz sim COMPONENT=Project3C`, then
+`python2 tests/project3/mid_review.py`. The script starts a node 3 listener,
+connects node 1 over the bidirectional 1-2-3 line, sends bytes `0..31` in
+stop-and-wait segments, and initiates close after all bytes are acknowledged.
+It checks the connection-state transitions, exact pattern verification, and
+both endpoints' cleanup. Full TOSSIM output is written to
+`logs/project3-mid-review.log`.
 
-Keep test commands aligned with the assignment signatures:
-`cmdTestServer(serverAddress, listenPort)`,
-`cmdTestClient(clientAddress, serverAddress, srcPort, destPort, transferBytes)`,
-and `cmdClientClose(clientAddress, serverAddress, srcPort, destPort)`.
-Add pause/resume controls for the flow-control stage. The current dispatcher
-has no-argument test events, so the Project 3 command wrapper must carry and
-validate these arguments explicitly.
+For a live explanation, point out that the listener stays separate from its
+accepted child; show the 9-byte header/11-byte data budget, cumulative ACKs,
+the fixed 3-second retry timer, and the next planned stages for a sliding
+window and receive-window flow control.

@@ -97,8 +97,17 @@ implementation {
    event void CommandHandler.printDistanceVector() {
       call DistanceVector.print();
    }
-   event void CommandHandler.setTestServer() {}
-   event void CommandHandler.setTestClient() {}
+   event void CommandHandler.setTestServer(uint16_t serverAddress,
+                                           uint8_t listenPort) {}
+   event void CommandHandler.setTestClient(uint16_t clientAddress,
+                                           uint16_t serverAddress,
+                                           uint8_t sourcePort,
+                                           uint8_t destinationPort,
+                                           uint16_t transferBytes) {}
+   event void CommandHandler.closeTestClient(uint16_t clientAddress,
+                                             uint16_t serverAddress,
+                                             uint8_t sourcePort,
+                                             uint8_t destinationPort) {}
    event void CommandHandler.setAppServer() {}
    event void CommandHandler.setAppClient() {}
 

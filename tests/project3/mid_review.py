@@ -1,0 +1,58 @@
+import os
+import sys
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+sys.path.insert(0, ROOT)
+
+from TestSim import TestSim
+
+
+def main():
+    log_dir = os.path.join(ROOT, "logs")
+    if not os.path.isdir(log_dir):
+        os.makedirs(log_dir)
+    log_path = os.path.join(log_dir, "project3-mid-review.log")
+
+    with open(log_path, "w") as output:
+        sim = TestSim()
+        sim.loadTopo("p3_midreview.topo")
+        sim.loadNoise("no_noise.txt")
+        sim.bootAll()
+        for channel in (sim.COMMAND_CHANNEL, sim.NEIGHBOR_CHANNEL,
+                        sim.ROUTING_CHANNEL, sim.TRANSPORT_CHANNEL):
+            sim.addChannel(channel, output)
+
+        sim.runForSeconds(30)
+        sim.testServer(3, 80)
+        sim.runForSeconds(1)
+        sim.testClient(1, 3, 81, 80, 32)
+        sim.runForSeconds(5)
+        sim.closeTestClient(1, 3, 81, 80)
+        sim.runForSeconds(15)
+
+    with open(log_path, "r") as result_file:
+        log = result_file.read()
+
+    expected = (
+        "state CLOSED -> SYN_SENT",
+        "state CLOSED -> SYN_RCVD",
+        "state SYN_SENT -> ESTABLISHED",
+        "state SYN_RCVD -> ESTABLISHED",
+        "pattern valid",
+        "total 32",
+        "TCP client close requested",
+        "TCP client connection closed",
+        "TCP server connection closed after 32 bytes"
+    )
+    missing = [marker for marker in expected if marker not in log]
+    if missing:
+        raise RuntimeError(
+            "Project 3 mid-review checks failed; missing {0}. See {1}".format(
+                ", ".join(missing), log_path))
+
+    print "Project 3 mid-review passed: setup, 32-byte transfer, and orderly close."
+    print "Detailed TOSSIM output: {0}".format(log_path)
+
+
+if __name__ == "__main__":
+    main()

@@ -19,6 +19,10 @@ module CommandHandlerP{
 }
 
 implementation{
+    uint16_t readNetwork16(uint8_t *bytes){
+        return ((uint16_t)bytes[0] << 8) | bytes[1];
+    }
+
     // Dispatch queued simulator commands, including routing metric selection.
     task void processCommand(){
         if(! call Queue.empty()){
@@ -80,13 +84,23 @@ implementation{
                 break;
 
             case CMD_TEST_CLIENT:
-                dbg(COMMAND_CHANNEL, "Command Type: Client\n");
-                signal CommandHandler.setTestClient();
+                dbg(COMMAND_CHANNEL, "Command Type: TCP test client\n");
+                signal CommandHandler.setTestClient(
+                    readNetwork16(buff), readNetwork16(&buff[2]),
+                    buff[4], buff[5], readNetwork16(&buff[6]));
                 break;
 
             case CMD_TEST_SERVER:
-                dbg(COMMAND_CHANNEL, "Command Type: Client\n");
-                signal CommandHandler.setTestServer();
+                dbg(COMMAND_CHANNEL, "Command Type: TCP test server\n");
+                signal CommandHandler.setTestServer(readNetwork16(buff),
+                                                    buff[2]);
+                break;
+
+            case CMD_CLIENT_CLOSE:
+                dbg(COMMAND_CHANNEL, "Command Type: TCP client close\n");
+                signal CommandHandler.closeTestClient(
+                    readNetwork16(buff), readNetwork16(&buff[2]),
+                    buff[4], buff[5]);
                 break;
 
             default:

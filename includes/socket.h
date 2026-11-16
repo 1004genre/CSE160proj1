@@ -1,11 +1,14 @@
 #ifndef __SOCKET_H__
 #define __SOCKET_H__
 
+#include "tcp.h"
+
 enum{
     MAX_NUM_OF_SOCKETS = 10,
     ROOT_SOCKET_ADDR = 255,
     ROOT_SOCKET_PORT = 255,
     SOCKET_BUFFER_SIZE = 128,
+    SOCKET_NONE = 255,
 };
 
 enum socket_state{
@@ -14,6 +17,10 @@ enum socket_state{
     ESTABLISHED,
     SYN_SENT,
     SYN_RCVD,
+    FIN_WAIT_1,
+    FIN_WAIT_2,
+    LAST_ACK,
+    TIME_WAIT,
 };
 
 
@@ -30,27 +37,30 @@ typedef nx_struct socket_addr_t{
 // File descripter id. Each id is associated with a socket_store_t
 typedef uint8_t socket_t;
 
-// State of a socket. 
+// State for a bounded transport connection or listener.
 typedef struct socket_store_t{
-    uint8_t flag;
+    bool allocated;
+    bool accepted;
     enum socket_state state;
-    socket_port_t src;
-    socket_addr_t dest;
-
-    // This is the sender portion.
+    uint16_t localAddr;
+    socket_port_t localPort;
+    uint16_t remoteAddr;
+    socket_port_t remotePort;
+    socket_t pendingChild;
     uint8_t sendBuff[SOCKET_BUFFER_SIZE];
-    uint8_t lastWritten;
-    uint8_t lastAck;
-    uint8_t lastSent;
-
-    // This is the receiver portion
+    uint16_t sendLength;
+    uint16_t sendAcked;
+    uint16_t sendNext;
+    uint16_t sendUna;
     uint8_t rcvdBuff[SOCKET_BUFFER_SIZE];
-    uint8_t lastRead;
-    uint8_t lastRcvd;
-    uint8_t nextExpected;
-
-    uint16_t RTT;
-    uint8_t effectiveWindow;
+    uint16_t rcvLength;
+    uint16_t rcvNext;
+    tcp_segment_t lastSegment;
+    bool hasOutstanding;
+    bool closeRequested;
+    uint8_t retries;
+    uint8_t elapsedSeconds;
+    uint8_t timeWaitSeconds;
 }socket_store_t;
 
 #endif

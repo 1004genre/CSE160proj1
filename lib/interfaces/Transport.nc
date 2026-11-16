@@ -1,4 +1,4 @@
-#include "../../packet.h"
+#include "../../includes/packet.h"
 #include "../../includes/socket.h"
 
 /**
@@ -16,13 +16,16 @@
  */
 
 interface Transport{
+   event void connectionEstablished(socket_t fd);
+   event void dataReceived(socket_t fd);
+   event void connectionClosed(socket_t fd);
+   event void connectionFailed(socket_t fd, uint8_t reason);
+
    /**
     * Get a socket if there is one available.
     * @Side Client/Server
     * @return
-    *    socket_t - return a socket file descriptor which is a number
-    *    associated with a socket. If you are unable to allocated
-    *    a socket then return a NULL socket_t.
+    *    socket_t - a file descriptor, or SOCKET_NONE if no slot is free.
     */
    command socket_t socket();
 
@@ -50,7 +53,7 @@ interface Transport{
     * @return socket_t - returns a new socket if the connection is
     *    accepted. this socket is a copy of the server socket but with
     *    a destination associated with the destination address and port.
-    *    if not return a null socket.
+    *    if no connection is waiting, return SOCKET_NONE.
     */
    command socket_t accept(socket_t fd);
 

@@ -12,6 +12,9 @@ class TestSim:
     CMD_ROUTE_DUMP = 3
     CMD_FLOOD_PING = 7
     CMD_ROUTING_METRIC = 8
+    CMD_TEST_CLIENT = 4
+    CMD_TEST_SERVER = 5
+    CMD_CLIENT_CLOSE = 10
 
     COMMAND_CHANNEL = "command"
     GENERAL_CHANNEL = "general"
@@ -126,6 +129,38 @@ class TestSim:
     def setRoutingMetric(self, nodeID, qualityEnabled):
         self.sendCMD(self.CMD_ROUTING_METRIC, nodeID,
                      chr(1 if qualityEnabled else 0))
+
+    def testServer(self, serverAddress, listenPort):
+        if not 1 <= listenPort <= 255:
+            raise ValueError('TCP listen port must be between 1 and 255')
+        payload = self._encode16(serverAddress) + chr(listenPort)
+        self.sendCMD(self.CMD_TEST_SERVER, serverAddress, payload)
+
+    def testClient(self, clientAddress, serverAddress, sourcePort,
+                   destinationPort, transferBytes):
+        if not 1 <= sourcePort <= 255 or not 1 <= destinationPort <= 255:
+            raise ValueError('TCP ports must be between 1 and 255')
+        if not 1 <= transferBytes <= 128:
+            raise ValueError('Mid-review transfer must be between 1 and 128 bytes')
+        payload = (self._encode16(clientAddress) +
+                   self._encode16(serverAddress) +
+                   chr(sourcePort) + chr(destinationPort) +
+                   self._encode16(transferBytes))
+        self.sendCMD(self.CMD_TEST_CLIENT, clientAddress, payload)
+
+    def closeTestClient(self, clientAddress, serverAddress, sourcePort,
+                        destinationPort):
+        if not 1 <= sourcePort <= 255 or not 1 <= destinationPort <= 255:
+            raise ValueError('TCP ports must be between 1 and 255')
+        payload = (self._encode16(clientAddress) +
+                   self._encode16(serverAddress) +
+                   chr(sourcePort) + chr(destinationPort))
+        self.sendCMD(self.CMD_CLIENT_CLOSE, clientAddress, payload)
+
+    def _encode16(self, value):
+        if not 0 <= value <= 65535:
+            raise ValueError('TCP address/length must fit in 16 bits')
+        return chr((value >> 8) & 0xff) + chr(value & 0xff)
 
     def neighborDMP(self, destination):
         self.sendCMD(self.CMD_NEIGHBOR_DUMP, destination, 'neighbor command')
