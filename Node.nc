@@ -20,7 +20,7 @@ implementation {
    uint16_t nextSequenceNumber = 0;
 
    void makePack(pack *p, uint16_t src, uint16_t dest, uint8_t ttl,
-                 uint8_t protocol, uint16_t seq, uint8_t *payload);
+                 uint8_t protocol, uint16_t seq, const void *payload);
    bool sendRouted(pack *p);
    void processRouted(pack *p);
 
@@ -146,7 +146,7 @@ implementation {
          return;
       }
 
-      p->TTL--;
+      p->TTL = p->TTL - 1;
 
       if (call Sender.send(*p, next) == SUCCESS) {
          dbg(ROUTING_CHANNEL,
@@ -188,7 +188,7 @@ implementation {
 
    // Initialize the end-to-end network header and copy the fixed-size payload.
    void makePack(pack *p, uint16_t src, uint16_t dest, uint8_t ttl,
-                 uint8_t protocol, uint16_t seq, uint8_t *payload) {
+                 uint8_t protocol, uint16_t seq, const void *payload) {
       p->src = src;
       p->dest = dest;
       p->TTL = ttl;

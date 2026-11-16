@@ -1,5 +1,10 @@
 # Project 2 Design Summary
 
+`Project2C` wires `Project2Node` to `DistanceVectorC` and the separate
+`NeighborDiscoveryC` service. Distance vector queries neighbor state through
+the `NeighborDiscovery` interface; it does not implement beacon exchange or
+neighbor-table maintenance. Link-state routing is not implemented yet.
+
 the routing table is a statically allocated array indexed by the 8-bit destination ID. each entry stores the validity, selected next hop, path cost, age since its last selected-next-hop update, and an unreachable withdrawal timer. the node's own route is always valid at cost 0. neighbor discovery keeps at most 32 entries and confirms a bidirectional link with a beacon, ack, and confirmation. In the required hop-count mode each confirmed neighbor has a direct route of cost 1; optional quality-aware mode uses its measured link cost. excess neighbors are logged and ignored.
 
 distance-vector control packets use AM and are sent directly to one neighbor, independent of the data route. each packet reuses the fixed 28-byte `pack` format. its payload contains a count and up to nine byte pairs (destination, cost). a staged sender emits one page every 250 ms and retries a page if the SimpleSend queue is full. it sends all known finite and withdrawal entries to each neighbor; omission in one page does not change a route. Recipient-specific poison reverse advertises the active mode's infinity (16 for hop count, 255 for quality-aware) for destinations whose selected next hop is that recipient, while the self-route is always 0.

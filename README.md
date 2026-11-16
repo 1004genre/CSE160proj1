@@ -50,6 +50,25 @@ For now you can keep the gain constant for all of your topographies. A line writ
 as ```1 2 -53``` denotes a one-way connection from 1 to 2. To make it bidirectional
 include also ```2 1 -53```.
 
+# Project-specific builds
+
+Build the isolated Project 1 flooding and neighbor-discovery application with:
+
+```sh
+make micaz sim COMPONENT=Project1C
+```
+
+Build the Project 2 distance-vector application with:
+
+```sh
+make micaz sim COMPONENT=Project2C
+```
+
+Project 2 consumes the shared neighbor-discovery service through the
+`NeighborDiscovery` interface; it does not implement neighbor discovery itself.
+Link-state routing is not implemented in this workspace yet. `NodeC` remains
+available as the original combined application.
+
 # Running Simulations
 
 The following is an example of a simulation script.
@@ -88,7 +107,8 @@ if __name__ == '__main__':
     main()
 ```
 
-For Project 1 broadcast flooding, run `python2 pingTest.py`. The `ping`
+Build with `COMPONENT=Project1C` before running Project 1 broadcast flooding
+with `python2 pingTest.py`. The `ping`
 command is Project 2 routed unicast; `TestSim.floodPing(source, destination,
 message)` sends the separate Project 1 flood command. This keeps flooding
 available without causing ordinary routed packets to fall back to broadcasts.
@@ -100,7 +120,7 @@ available without causing ordinary routed packets to fall back to broadcasts.
 From this project directory, build the TOSSIM application using the TinyOS environment:
 
 ```sh
-make micaz sim
+make micaz sim COMPONENT=Project2C
 python2 tests/project2/line.py
 ```
 

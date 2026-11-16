@@ -13,9 +13,9 @@ This file wires `NeighborDiscoveryP` to 3 TinyOS services:
 - `SimpleSendC(AM_PACK)` queues signal broadcasts, so that a a busy radio doesn't immediately drop them.
 - `AMReceiverC(AM_PACK)` sends received packets to process what was broadcast.
 
-### `NodeC.nc` and `Node.nc`
+### `Project1C.nc` and `Project1Node.nc`
 
-`NodeC` wires the neighbor-discovery component to `Node`. `Node` declares the `NeighborDiscovery` interface, starts it in `Boot.booted`, and delegates `printNeighbors` command to `NeighborDiscovery.print()`.
+`Project1C` is the standalone Project 1 application. It wires `Project1Node` to `NeighborDiscoveryC` and `FloodingC`. `Project1Node` starts neighbor discovery at boot, delegates `printNeighbors`, and routes flood-ping commands and broadcast packets to the flooding service. `NodeC` remains the combined compatibility application; `Project2C` is the separate distance-vector application and consumes neighbor data through the same interface.
 
 
 ### Packet identity and duplicate history

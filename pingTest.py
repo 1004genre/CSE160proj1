@@ -10,7 +10,7 @@ def main():
     sim.addChannel(sim.NEIGHBOR_CHANNEL)
     sim.addChannel(sim.FLOODING_CHANNEL)
     sim.runForSeconds(8)
-    sim.floodPing(1, 10, "Project 1 broadcast flooding")
+    sim.floodPing(1, 10, "P1 flood")
     sim.runForSeconds(15)
 
 
