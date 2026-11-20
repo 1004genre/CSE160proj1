@@ -29,8 +29,33 @@ implementation {
    }
 
    void setState(socket_t fd, enum socket_state state) {
+      enum socket_state previous = sockets[fd].state;
+
+      if (previous == CLOSED && state == SYN_SENT) {
+         dbg(TRANSPORT_CHANNEL,
+             "Node %d: CLOSED -> SYN_SENT\n", TOS_NODE_ID);
+      } else if (previous == CLOSED && state == SYN_RCVD) {
+         dbg(TRANSPORT_CHANNEL,
+             "Node %d: LISTEN -> SYN_RCVD\n", TOS_NODE_ID);
+      } else if (previous == SYN_SENT && state == ESTABLISHED) {
+         dbg(TRANSPORT_CHANNEL,
+             "Node %d: SYN_SENT -> ESTABLISHED\n", TOS_NODE_ID);
+      } else if (previous == SYN_RCVD && state == ESTABLISHED) {
+         dbg(TRANSPORT_CHANNEL,
+             "Node %d: SYN_RCVD -> ESTABLISHED\n", TOS_NODE_ID);
+      } else if (previous == ESTABLISHED && state == FIN_WAIT_1) {
+         dbg(TRANSPORT_CHANNEL,
+             "Node %d: ESTABLISHED -> FIN_WAIT_1\n", TOS_NODE_ID);
+      } else if (previous == ESTABLISHED && state == LAST_ACK) {
+         dbg(TRANSPORT_CHANNEL,
+             "Node %d: ESTABLISHED -> LAST_ACK\n", TOS_NODE_ID);
+      } else if (previous == FIN_WAIT_2 && state == TIME_WAIT) {
+         dbg(TRANSPORT_CHANNEL,
+             "Node %d: FIN_WAIT_1/FIN_WAIT_2 -> TIME_WAIT\n", TOS_NODE_ID);
+      }
+
       dbg(TRANSPORT_CHANNEL, "Node %d TCP fd %d state %s -> %s\n",
-          TOS_NODE_ID, fd, stateName(sockets[fd].state), stateName(state));
+          TOS_NODE_ID, fd, stateName(previous), stateName(state));
       sockets[fd].state = state;
    }
 
@@ -54,10 +79,18 @@ implementation {
 
    void clearSocket(socket_t fd) {
       uint8_t i;
+      enum socket_state previous = sockets[fd].state;
       for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
          if (sockets[i].allocated && sockets[i].pendingChild == fd) {
             sockets[i].pendingChild = SOCKET_NONE;
          }
+      }
+      if (previous == LAST_ACK) {
+         dbg(TRANSPORT_CHANNEL,
+             "Node %d closes and releases its connection\n", TOS_NODE_ID);
+      } else if (previous == TIME_WAIT) {
+         dbg(TRANSPORT_CHANNEL,
+             "Node %d releases its record after TIME_WAIT\n", TOS_NODE_ID);
       }
       dbg(TRANSPORT_CHANNEL, "Node %d TCP fd %d released\n",
           TOS_NODE_ID, fd);
@@ -149,6 +182,10 @@ implementation {
       uint16_t seq = sockets[fd].sendNext;
       sockets[fd].sendNext++;
       setState(fd, state);
+      if (state == LAST_ACK) {
+         dbg(TRANSPORT_CHANNEL,
+             "Node %d sends FIN\n", TOS_NODE_ID);
+      }
       sendSegment(fd, TCP_FLAG_FIN | TCP_FLAG_ACK, seq,
                   sockets[fd].rcvNext, NULL, 0, TRUE);
    }
@@ -489,6 +526,11 @@ implementation {
          if (segment->seq == sockets[fd].rcvNext) {
             sockets[fd].rcvNext++;
             sendAck(fd);
+            if (sockets[fd].state == FIN_WAIT_1 ||
+                sockets[fd].state == FIN_WAIT_2) {
+               dbg(TRANSPORT_CHANNEL,
+                   "Node %d sends the final ACK\n", TOS_NODE_ID);
+            }
             if (sockets[fd].state == ESTABLISHED) {
                sendFin(fd, LAST_ACK);
             } else if (sockets[fd].state == FIN_WAIT_1 ||

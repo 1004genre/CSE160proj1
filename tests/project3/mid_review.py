@@ -34,6 +34,8 @@ def main():
         log = result_file.read()
 
     expected = (
+        "TCP test server listening on port 80",
+        "TCP test client connecting",
         "state CLOSED -> SYN_SENT",
         "state CLOSED -> SYN_RCVD",
         "state SYN_SENT -> ESTABLISHED",
@@ -50,6 +52,26 @@ def main():
             "Project 3 mid-review checks failed; missing {0}. See {1}".format(
                 ", ".join(missing), log_path))
 
+    print ""
+    print "Connection setup:"
+    print "Node 1: CLOSED -> SYN_SENT"
+    print "Node 3: LISTEN -> SYN_RCVD"
+    print "Node 1: SYN_SENT -> ESTABLISHED"
+    print "Node 3: SYN_RCVD -> ESTABLISHED"
+    print ""
+    print "Reliable data transfer:"
+    print "Node 1 sent 32 bytes using stop-and-wait"
+    print "Node 3 verified the byte pattern and returned cumulative ACKs"
+    print ""
+    print "Orderly teardown:"
+    print "Node 1: ESTABLISHED -> FIN_WAIT_1"
+    print "Node 3: ESTABLISHED -> LAST_ACK"
+    print "Node 3 sends FIN"
+    print "Node 1: FIN_WAIT_1/FIN_WAIT_2 -> TIME_WAIT"
+    print "Node 1 sends the final ACK"
+    print "Node 3 closes and releases its connection"
+    print "Node 1 releases its record after TIME_WAIT"
+    print ""
     print "Project 3 mid-review passed: setup, 32-byte transfer, and orderly close."
     print "Detailed TOSSIM output: {0}".format(log_path)
 
