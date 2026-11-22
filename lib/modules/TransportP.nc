@@ -293,6 +293,7 @@ implementation {
       uint16_t highestSent;
       uint16_t newlyAcked;
       uint16_t outstanding;
+      uint8_t previousWindow;
 
       if (!(segment->flags & TCP_FLAG_ACK)) return;
       if (sockets[fd].sendNext < sockets[fd].sendUna ||
@@ -306,9 +307,15 @@ implementation {
       if (segment->ack < sockets[fd].sendUna ||
           segment->ack > highestSent) return;
 
+      previousWindow = sockets[fd].peerWindow;
       sockets[fd].peerWindow = segment->window;
       if (sockets[fd].persistProbing) {
          // Any in-range ACK proves the peer is alive; zero window alone is not failure.
+         if (previousWindow == 0 && segment->window > 0) {
+            dbg(TRANSPORT_CHANNEL,
+                "Node %d TCP fd %d window reopened after probe: %d bytes\n",
+                TOS_NODE_ID, fd, segment->window);
+         }
          sockets[fd].persistProbing = FALSE;
          sockets[fd].retries = 0;
          sockets[fd].elapsedSeconds = 0;
@@ -395,6 +402,10 @@ implementation {
          sockets[fd].rcvLength += segment->dataLength;
          sockets[fd].rcvTotal += segment->dataLength;
          sockets[fd].rcvNext += segment->dataLength;
+         dbg(TRANSPORT_CHANNEL,
+             "Node %d TCP fd %d receive buffer %d/128 window %d\n",
+             TOS_NODE_ID, fd, sockets[fd].rcvLength,
+             receiveWindow(&sockets[fd]));
          dbg(TRANSPORT_CHANNEL,
              "Node %d TCP fd %d accepted data seq %d len %d next %d\n",
              TOS_NODE_ID, fd, segment->seq, segment->dataLength,
@@ -516,6 +527,7 @@ implementation {
          sockets[fd].rcvLength -= amount;
          memmove(sockets[fd].rcvdBuff,
                  &sockets[fd].rcvdBuff[amount], sockets[fd].rcvLength);
+         // Consumption frees storage; advertise the larger window without waiting for data.
          sendAck(fd);
          releaseIfDrained(fd);
       }

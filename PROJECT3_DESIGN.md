@@ -10,9 +10,10 @@
   `PROTOCOL_TCP` packets.
 - `tests/project3/mid_review.py` exercises a three-node line, verifies multiple
   outstanding segments and partial-write resumption in a byte-exact 256-byte
-  transfer, and checks close.
-  Zero-window recovery, concurrent active connections, and deterministic loss
-  injection still need dedicated validation.
+  transfer, pauses the consumer through a zero window, drops one reopening
+  update, and checks probe recovery and close.
+  Zero-window recovery with a dropped reopening update is covered; concurrent
+  active connections and broader deterministic loss cases still need validation.
 
 ## Mid-review target
 
@@ -25,11 +26,14 @@ Demonstrate on a stable three-node line (1-2-3), after routes converge:
    window; node 3 checks the bytes and returns cumulative ACKs.
 4. Node 1 initiates an orderly close after accepted data is acknowledged;
    logs show the FIN/ACK exchange, the peer FIN/final ACK, and cleanup.
-5. The demo exposes the connection record, retry timer, outstanding byte
+5. A paused test consumer fills the receive buffer; the harness drops its first
+   reopening update, and a later probe recovers the advertised window without
+   exceeding the 128-byte receiver bound.
+6. The demo exposes the connection record, retry timer, outstanding byte
    ranges, and advertised-window behavior.
 
-The mid-review demonstrates a fixed sliding window. Full loss, zero-window,
-and long-transfer tests remain separate validation stages.
+The mid-review demonstrates a fixed sliding window and one zero-window recovery
+case. Broader loss scenarios and long transfers remain separate validation stages.
 
 ## Proposed architecture and invariants
 
@@ -109,6 +113,12 @@ requires no valid response to five probes plus the final timeout interval.
 Go-Back-N retransmission begins at the oldest unacknowledged byte and limits
 each retry to the current fixed and advertised window; remaining bytes stay
 retained until later ACK/window progress allows them.
+
+The mid-review consumer pauses for eight seconds after accept; the packet
+handler only notifies, while a 500 ms timer resumes reads through
+`Transport.read`. The test drops the first positive-window ACK from that read,
+then checks that a later probe recovers the window and logged receive occupancy
+never exceeds 128 bytes.
 
 ## Work plan
 

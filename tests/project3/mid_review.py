@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
@@ -29,8 +30,8 @@ def main():
         sim.testClient(1, 3, 81, 80, 256)
         sim.runForSeconds(5)
         sim.closeTestClient(1, 3, 81, 80)
-        # TIME_WAIT lasts 18 seconds, covering the full FIN retry horizon.
-        sim.runForSeconds(25)
+        # Allow the consumer pause, transfer completion, and 18-second TIME_WAIT.
+        sim.runForSeconds(40)
 
     with open(log_path, "r") as result_file:
         log = result_file.read()
@@ -43,6 +44,13 @@ def main():
         "state SYN_SENT -> ESTABLISHED",
         "state SYN_RCVD -> ESTABLISHED",
         "outstanding 24/48",
+        "TCP test consumer paused",
+        "receive buffer 128/128",
+        "TCP test receiver advertised zero window",
+        "TCP test consumer resumed",
+        "TCP test dropped reopening window update",
+        "send flags 16",
+        "window reopened after probe",
         "pattern valid",
         "total 256",
         "TCP client close requested",
@@ -55,6 +63,12 @@ def main():
             "Project 3 mid-review checks failed; missing {0}. See {1}".format(
                 ", ".join(missing), log_path))
 
+    occupancies = [int(value) for value in
+                   re.findall(r"receive buffer (\d+)/128", log)]
+    if not occupancies or max(occupancies) > 128:
+        raise RuntimeError(
+            "Project 3 receive buffer bound failed. See {0}".format(log_path))
+
     print ""
     print "Connection setup:"
     print "Node 1: CLOSED -> SYN_SENT"
@@ -65,6 +79,10 @@ def main():
     print "Reliable data transfer:"
     print "Node 1 sent 256 bytes using the fixed sliding window"
     print "Node 3 verified the byte pattern and returned cumulative ACKs"
+    print ""
+    print "Receive flow control:"
+    print "Node 3 paused consumption, reached zero window, and dropped one reopening update"
+    print "Node 1 recovered through a window probe; receiver occupancy stayed within 128 bytes"
     print ""
     print "Orderly teardown:"
     print "Node 1: ESTABLISHED -> FIN_WAIT_1"

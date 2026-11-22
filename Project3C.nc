@@ -5,6 +5,7 @@ implementation {
    components new AMReceiverC(AM_PACK) as GeneralReceive;
    components new SimpleSendC(AM_PACK) as DataSender;
    components new TimerMilliC() as TransportRetryTimer;
+   components new TimerMilliC() as TestConsumerTimer;
 
    Project3Node -> MainC.Boot;
    Project3Node.Receive -> GeneralReceive;
@@ -20,4 +21,5 @@ implementation {
    TransportP.Network -> Project3Node.TransportNetwork;
    TransportP.Boot -> MainC.Boot;
    TransportP.RetryTimer -> TransportRetryTimer;
+   Project3Node.ConsumerTimer -> TestConsumerTimer;
 }

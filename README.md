@@ -251,7 +251,9 @@ The test starts a listener on node 3, connects from node 1 over
 `topo/p3_midreview.topo`, transfers 256 bytes with a fixed four-segment sender
 window, then performs an orderly close. The transfer exceeds the 128-byte
 local send buffer, exercising partial writes and resumption. It checks that
-multiple data segments are outstanding, verifies the bytes, and checks cleanup.
+multiple data segments are outstanding, pauses the receiver until its window
+closes, drops one reopening update, and verifies probe recovery without buffer
+overflow. It also verifies the bytes and cleanup.
 Detailed output is saved to `logs/project3-mid-review.log`.
 
 Project 3 uses the 29-byte course packet budget: an 8-byte network header and

@@ -16,9 +16,15 @@ module Project3Node {
    uses interface NeighborDiscovery;
    uses interface DistanceVector;
    uses interface Transport;
+   uses interface Timer<TMilli> as ConsumerTimer;
    provides interface TransportNetwork;
 }
 implementation {
+   enum {
+      TCP_CONSUMER_PAUSE_MS = 8000,
+      TCP_CONSUMER_INTERVAL_MS = 500
+   };
+
    uint16_t nextSequenceNumber = 0;
    socket_t serverSocket = SOCKET_NONE;
    socket_t serverConnection = SOCKET_NONE;
@@ -30,6 +36,9 @@ implementation {
    uint16_t clientBytesQueued = 0;
    bool clientClosePending = FALSE;
    uint16_t serverBytesReceived = 0;
+   bool consumerPaused = FALSE;
+   bool sawZeroWindow = FALSE;
+   bool dropNextWindowUpdate = FALSE;
 
    void makePack(pack *p, uint16_t src, uint16_t dest, uint8_t ttl,
                  uint8_t protocol, uint16_t seq, const void *payload);
@@ -64,6 +73,26 @@ implementation {
       }
    }
 
+   void consumeServerData(void) {
+      uint8_t data[SOCKET_BUFFER_SIZE];
+      uint16_t amount;
+      uint16_t i;
+      bool valid = TRUE;
+
+      if (serverConnection == SOCKET_NONE || consumerPaused) return;
+      amount = call Transport.read(serverConnection, data, sizeof(data));
+      for (i = 0; i < amount; i++) {
+         if (data[i] != ((serverBytesReceived + i) & 0xff)) valid = FALSE;
+      }
+      serverBytesReceived += amount;
+      if (amount > 0) {
+         dbg(TRANSPORT_CHANNEL,
+             "Node %d TCP test consumer read %d bytes, pattern %s (total %d)\n",
+             TOS_NODE_ID, amount, valid ? "valid" : "INVALID",
+             serverBytesReceived);
+      }
+   }
+
    event void Boot.booted() {
       call AMControl.start();
       call NeighborDiscovery.start();
@@ -75,6 +104,22 @@ implementation {
    }
 
    event void AMControl.stopDone(error_t err) {}
+
+   event void ConsumerTimer.fired() {
+      if (serverConnection == SOCKET_NONE) {
+         call ConsumerTimer.stop();
+         return;
+      }
+      if (consumerPaused) {
+         consumerPaused = FALSE;
+         if (sawZeroWindow) dropNextWindowUpdate = TRUE;
+         dbg(TRANSPORT_CHANNEL,
+             "Node %d TCP test consumer resumed%s\n", TOS_NODE_ID,
+             dropNextWindowUpdate ? "; dropping first reopening update" : "");
+         call ConsumerTimer.startPeriodic(TCP_CONSUMER_INTERVAL_MS);
+      }
+      consumeServerData();
+   }
 
    event message_t* Receive.receive(message_t* msg, void* payload, uint8_t len) {
       pack *received;
@@ -267,9 +312,16 @@ implementation {
          }
          serverConnection = accepted;
          serverBytesReceived = 0;
+         consumerPaused = TRUE;
+         sawZeroWindow = FALSE;
+         dropNextWindowUpdate = FALSE;
+         call ConsumerTimer.startOneShot(TCP_CONSUMER_PAUSE_MS);
          dbg(TRANSPORT_CHANNEL,
              "Node %d TCP server accepted connection fd %d\n",
              TOS_NODE_ID, fd);
+         dbg(TRANSPORT_CHANNEL,
+             "Node %d TCP test consumer paused for %d ms\n",
+             TOS_NODE_ID, TCP_CONSUMER_PAUSE_MS);
       }
    }
 
@@ -278,22 +330,11 @@ implementation {
    }
 
    event void Transport.dataReceived(socket_t fd) {
-      uint8_t data[SOCKET_BUFFER_SIZE];
-      uint16_t amount;
-      uint16_t i;
-      bool valid = TRUE;
-
       if (fd != serverConnection) return;
-      amount = call Transport.read(fd, data, sizeof(data));
-      // A read here means the test application consumed the delivered bytes.
-      for (i = 0; i < amount; i++) {
-         if (data[i] != ((serverBytesReceived + i) & 0xff)) valid = FALSE;
-      }
-      serverBytesReceived += amount;
+      // Packet reception only notifies; the independent timer drives application reads.
       dbg(TRANSPORT_CHANNEL,
-          "Node %d TCP test data: %d bytes, pattern %s (total %d)\n",
-          TOS_NODE_ID, amount, valid ? "valid" : "INVALID",
-          serverBytesReceived);
+          "Node %d TCP data buffered; timer-driven test consumer will read it\n",
+          TOS_NODE_ID);
    }
 
    event void Transport.connectionClosed(socket_t fd) {
@@ -302,6 +343,8 @@ implementation {
              "Node %d TCP server connection closed after %d bytes\n",
              TOS_NODE_ID, serverBytesReceived);
          serverConnection = SOCKET_NONE;
+         consumerPaused = FALSE;
+         call ConsumerTimer.stop();
       } else if (fd == clientSocket) {
          dbg(TRANSPORT_CHANNEL,
              "Node %d TCP client connection closed\n", TOS_NODE_ID);
@@ -318,15 +361,33 @@ implementation {
          clientSocket = SOCKET_NONE;
          clientClosePending = FALSE;
       }
-      if (fd == serverConnection) serverConnection = SOCKET_NONE;
+      if (fd == serverConnection) {
+         serverConnection = SOCKET_NONE;
+         consumerPaused = FALSE;
+         call ConsumerTimer.stop();
+      }
    }
 
    command error_t TransportNetwork.send(uint16_t destination,
                                          const uint8_t *payload) {
       pack p;
+      const tcp_segment_t *segment = (const tcp_segment_t *)payload;
       // Each transport transmission, including a retry, gets a fresh network packet ID.
       makePack(&p, TOS_NODE_ID, destination, MAX_TTL, PROTOCOL_TCP,
                nextSequenceNumber++, payload);
+      if (segment->flags == TCP_FLAG_ACK && segment->window == 0) {
+         sawZeroWindow = TRUE;
+         dbg(TRANSPORT_CHANNEL,
+             "Node %d TCP test receiver advertised zero window\n", TOS_NODE_ID);
+      }
+      if (dropNextWindowUpdate && segment->flags == TCP_FLAG_ACK &&
+          segment->window > 0) {
+         dropNextWindowUpdate = FALSE;
+         dbg(TRANSPORT_CHANNEL,
+             "Node %d TCP test dropped reopening window update packet %d\n",
+             TOS_NODE_ID, p.seq);
+         return SUCCESS;
+      }
       if (destination == TOS_NODE_ID) {
          processRouted(&p);
          return SUCCESS;
