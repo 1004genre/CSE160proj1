@@ -4,6 +4,7 @@
 #include "tcp.h"
 
 enum{
+    // Each record owns its connection state; multiple records may coexist per node.
     MAX_NUM_OF_SOCKETS = 10,
     ROOT_SOCKET_ADDR = 255,
     ROOT_SOCKET_PORT = 255,
@@ -58,6 +59,7 @@ typedef struct socket_store_t{
     tcp_segment_t lastSegment;
     bool hasOutstanding;
     bool closeRequested;
+    // A shared timer ticks these per-connection retry and TIME_WAIT counters.
     uint8_t retries;
     uint8_t elapsedSeconds;
     uint8_t timeWaitSeconds;

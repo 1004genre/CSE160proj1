@@ -7,7 +7,8 @@
 
 enum {
    PACKET_HEADER_LENGTH = 8,
-   PACKET_MAX_PAYLOAD_SIZE = 28 - PACKET_HEADER_LENGTH,
+   // The course budget is 29 bytes total; the 8-byte network header uses part of it.
+   PACKET_MAX_PAYLOAD_SIZE = 29 - PACKET_HEADER_LENGTH,
    MAX_TTL = 15,
    AM_PACK = 6,
    AM_ROUTING = 7
