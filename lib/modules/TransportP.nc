@@ -171,6 +171,7 @@ implementation {
          sockets[fd].retries = 0;
          sockets[fd].elapsedSeconds = 0;
       }
+      // Failed tracked sends keep their sequence range for a later transport retry.
       result = call Network.send(sockets[fd].remoteAddr, payload);
       dbg(TRANSPORT_CHANNEL,
           "Node %d TCP fd %d send flags %d seq %d ack %d len %d window %d%s\n",
@@ -772,6 +773,7 @@ implementation {
 
    event void RetryTimer.fired() {
       socket_t fd;
+      // The fixed socket table bounds this callback; each data retry is window-limited.
       for (fd = 0; fd < MAX_NUM_OF_SOCKETS; fd++) {
          if (!sockets[fd].allocated) continue;
 

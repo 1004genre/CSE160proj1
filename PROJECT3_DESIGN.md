@@ -120,6 +120,14 @@ handler only notifies, while a 500 ms timer resumes reads through
 then checks that a later probe recovers the window and logged receive occupancy
 never exceeds 128 bytes.
 
+Transport timer work scans a fixed table of at most ten sockets. Each retry is
+limited to the current 48-byte sender window (at most four 12-byte segments),
+and each routing event forwards one packet. Missing routes or a full network
+send queue leave transport bytes and sequence ranges retained for the next
+retry; every retry resolves its next hop again, so a repaired route can choose
+a different neighbor. Neighbor discovery and distance-vector timers continue
+on their own components while transport retries wait.
+
 ## Work plan
 
 | Stage | Work | Exit check |

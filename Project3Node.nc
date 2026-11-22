@@ -425,6 +425,7 @@ implementation {
       }
 
       p->TTL = p->TTL - 1;
+      // Each forwarding event handles one packet, so routing work stays bounded.
       if (call Sender.send(*p, next) == SUCCESS) {
          dbg(ROUTING_CHANNEL,
              "Node %d Routing Packet - src: %d, dest: %d, seq: %d, next hop: %d, cost: %d\n",
@@ -440,6 +441,7 @@ implementation {
       uint16_t next;
       uint8_t cost;
       if (p->dest == TOS_NODE_ID) return FALSE;
+      // Resolve the next hop on every send so retries use repaired or changed routes.
       if (!call DistanceVector.nextHop(p->dest, &next, &cost)) {
          dbg(ROUTING_CHANNEL,
              "Node %d dropped packet src %d dest %d seq %d: no route\n",
