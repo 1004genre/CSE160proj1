@@ -14,6 +14,11 @@ module TransportP {
 implementation {
    socket_store_t sockets[MAX_NUM_OF_SOCKETS];
 
+#ifndef TOSSIM
+   // Only the simulator has virtual time; keep hardware builds compilable.
+#define sim_time_string() "hardware"
+#endif
+
    // Subtract the encoded transport header from the network payload budget.
    uint8_t segmentDataCapacity() {
       return PACKET_MAX_PAYLOAD_SIZE - TCP_HEADER_SIZE;
@@ -86,10 +91,42 @@ implementation {
       dbg(TRANSPORT_CHANNEL, "Node %d TCP fd %d state %s -> %s\n",
           TOS_NODE_ID, fd, stateName(previous), stateName(state));
       sockets[fd].state = state;
+      dbg(PROJECT3_TGEN_CHANNEL,
+          "t=%s node=%d conn=%d %d:%d->%d:%d event=STATE state=%s previous=%s\n",
+          sim_time_string(), TOS_NODE_ID, fd, sockets[fd].localAddr,
+          sockets[fd].localPort, sockets[fd].remoteAddr,
+          sockets[fd].remotePort, stateName(state), stateName(previous));
    }
 
    bool validSocket(socket_t fd) {
       return fd < MAX_NUM_OF_SOCKETS && sockets[fd].allocated;
+   }
+
+   // Print the fd-to-endpoint mapping once so every event has a stable connection ID.
+   void logConnection(socket_t fd, const char *event) {
+      if (!validSocket(fd)) return;
+      dbg(PROJECT3_TGEN_CHANNEL,
+          "t=%s node=%d conn=%d %d:%d->%d:%d event=%s state=%s\n",
+          sim_time_string(), TOS_NODE_ID, fd, sockets[fd].localAddr,
+          sockets[fd].localPort, sockets[fd].remoteAddr,
+          sockets[fd].remotePort, event, stateName(sockets[fd].state));
+   }
+
+   // Log transport byte positions, current windows, and send-queue acceptance.
+   void logWireSegment(socket_t fd, const char *event, uint16_t seq,
+                       uint16_t ack, uint8_t length, uint8_t window,
+                       error_t result) {
+      uint16_t outstanding = 0;
+      if (!validSocket(fd)) return;
+      if (sockets[fd].sendNext >= sockets[fd].sendUna)
+         outstanding = sockets[fd].sendNext - sockets[fd].sendUna;
+      if (length > 0 && seq == sockets[fd].sendNext) outstanding += length;
+      dbg(PROJECT3_TGEN_CHANNEL,
+          "t=%s node=%d conn=%d %d:%d->%d:%d event=%s state=%s seq=%d len=%d ack=%d wnd=%d outstanding=%d peerWnd=%d queued=%d\n",
+          sim_time_string(), TOS_NODE_ID, fd, sockets[fd].localAddr,
+          sockets[fd].localPort, sockets[fd].remoteAddr,
+          sockets[fd].remotePort, event, stateName(sockets[fd].state),
+          seq, length, ack, window, outstanding, sockets[fd].peerWindow, result);
    }
 
    socket_t allocateSocket() {
@@ -122,6 +159,7 @@ implementation {
          dbg(TRANSPORT_CHANNEL,
              "Node %d releases its record after TIME_WAIT\n", TOS_NODE_ID);
       }
+      logConnection(fd, "CONN_CLEANUP");
       dbg(TRANSPORT_CHANNEL, "Node %d TCP fd %d released\n",
           TOS_NODE_ID, fd);
       memset(&sockets[fd], 0, sizeof(socket_store_t));
@@ -219,6 +257,16 @@ implementation {
       }
       // Failed tracked sends keep their sequence range for a later transport retry.
       result = call Network.send(sockets[fd].remoteAddr, payload);
+      {
+         const char *event = "CONTROL_TX";
+         if (kind == TCP_KIND_DATA) event = "DATA_TX";
+         else if (kind == TCP_CODE_SYN) event = "SYN_TX";
+         else if (kind == TCP_CODE_SYN_ACK) event = "SYN_ACK_TX";
+         else if (kind == TCP_CODE_ACK) event = "ACK_TX";
+         else if (kind == TCP_CODE_FIN) event = "FIN_TX";
+         else if (kind == TCP_CODE_PROBE) event = "WINDOW_PROBE_TX";
+         logWireSegment(fd, event, seq, ack, length, segment->window, result);
+      }
       dbg(TRANSPORT_CHANNEL,
           "Node %d TCP fd %d send code %d seq %d ack %d len %d window %d%s\n",
           TOS_NODE_ID, fd, segment.kindLength, seq, ack, length, segment.window,
@@ -282,6 +330,8 @@ implementation {
                          &sockets[fd].sendBuff[offset], length, FALSE) != SUCCESS) {
             break;
          }
+         logWireSegment(fd, "DATA_RETX", sockets[fd].retransmitCursor,
+                        0, length, receiveWindow(&sockets[fd]), SUCCESS);
          sockets[fd].retransmitCursor += length;
          sent++;
       }
@@ -294,11 +344,27 @@ implementation {
       uint16_t outstanding;
       uint16_t retransmitLength;
       uint16_t window;
+      error_t result;
       if (sockets[fd].controlOutstanding) {
+         const char *event = "FIN_RETX";
          memset(payload, 0, sizeof(payload));
          memcpy(payload, &sockets[fd].lastSegment,
                 sizeof(tcp_segment_t));
-         call Network.send(sockets[fd].remoteAddr, payload);
+         if (sockets[fd].lastSegment.kindLength == TCP_CODE_SYN)
+            event = "SYN_RETX";
+         else if (sockets[fd].lastSegment.kindLength == TCP_CODE_SYN_ACK)
+            event = "SYN_ACK_RETX";
+         result = call Network.send(sockets[fd].remoteAddr, payload);
+         logWireSegment(fd, event, sockets[fd].lastSegment.seq,
+                        sockets[fd].lastSegment.ack, 0,
+                        sockets[fd].lastSegment.window, result);
+         if (result != SUCCESS) {
+            dbg(PROJECT3_TGEN_CHANNEL,
+                "t=%s node=%d conn=%d %d:%d->%d:%d event=RETX_QUEUE_FULL state=%s result=%d\n",
+                sim_time_string(), TOS_NODE_ID, fd, sockets[fd].localAddr,
+                sockets[fd].localPort, sockets[fd].remoteAddr,
+                sockets[fd].remotePort, stateName(sockets[fd].state), result);
+         }
       } else {
          // Go-back-N starts at the oldest byte and stays inside the current peer window.
          outstanding = sockets[fd].sendNext - sockets[fd].sendUna;
@@ -308,6 +374,13 @@ implementation {
          sockets[fd].retransmitCursor = sockets[fd].sendUna;
          sockets[fd].retransmitEnd = sockets[fd].sendUna + retransmitLength;
          sockets[fd].retransmitPending = retransmitLength > 0;
+         dbg(PROJECT3_TGEN_CHANNEL,
+             "t=%s node=%d conn=%d %d:%d->%d:%d event=DATA_RETX state=%s start=%d end=%d outstanding=%d peerWnd=%d retry=%d\n",
+             sim_time_string(), TOS_NODE_ID, fd, sockets[fd].localAddr,
+             sockets[fd].localPort, sockets[fd].remoteAddr,
+             sockets[fd].remotePort, stateName(sockets[fd].state),
+             sockets[fd].retransmitCursor, sockets[fd].retransmitEnd,
+             outstanding, sockets[fd].peerWindow, sockets[fd].retries);
          sendDataBatch(fd);
       }
       dbg(TRANSPORT_CHANNEL, "Node %d TCP fd %d retransmit #%d\n",
@@ -384,6 +457,15 @@ implementation {
    }
 
    void reportFailure(socket_t fd, uint8_t reason) {
+      if (validSocket(fd)) {
+         dbg(PROJECT3_TGEN_CHANNEL,
+             "t=%s node=%d conn=%d %d:%d->%d:%d event=CONNECTION_FAILURE state=%s reason=%d sendBuffered=%d acked=%d received=%d\n",
+             sim_time_string(), TOS_NODE_ID, fd, sockets[fd].localAddr,
+             sockets[fd].localPort, sockets[fd].remoteAddr,
+             sockets[fd].remotePort, stateName(sockets[fd].state), reason,
+             sockets[fd].sendLength, sockets[fd].sendAcked,
+             sockets[fd].rcvTotal);
+      }
       signal Transport.connectionFailed(fd, reason);
       clearSocket(fd);
    }
@@ -395,6 +477,13 @@ implementation {
       uint8_t previousWindow;
 
       if (segment->kindLength != TCP_CODE_ACK) return;
+      dbg(PROJECT3_TGEN_CHANNEL,
+          "t=%s node=%d conn=%d %d:%d<-%d:%d event=ACK_RX state=%s cumAck=%d wnd=%d outstanding=%d\n",
+          sim_time_string(), TOS_NODE_ID, fd, sockets[fd].localAddr,
+          sockets[fd].localPort, sockets[fd].remoteAddr,
+          sockets[fd].remotePort, stateName(sockets[fd].state),
+          segment->ack, segment->window,
+          sockets[fd].sendNext - sockets[fd].sendUna);
       if (sockets[fd].sendNext < sockets[fd].sendUna ||
           sockets[fd].sendLength > SOCKET_BUFFER_SIZE) return;
       highestSent = sockets[fd].sendNext;
@@ -404,7 +493,15 @@ implementation {
       }
       // ACKs outside sent sequence space cannot move the window or free storage.
       if (segment->ack < sockets[fd].sendUna ||
-          segment->ack > highestSent) return;
+          segment->ack > highestSent) {
+         dbg(PROJECT3_TGEN_CHANNEL,
+             "t=%s node=%d conn=%d %d:%d<-%d:%d event=ACK_DROP state=%s reason=outside-sent-space ack=%d wnd=%d\n",
+             sim_time_string(), TOS_NODE_ID, fd, sockets[fd].localAddr,
+             sockets[fd].localPort, sockets[fd].remoteAddr,
+             sockets[fd].remotePort, stateName(sockets[fd].state),
+             segment->ack, segment->window);
+         return;
+      }
 
       previousWindow = sockets[fd].peerWindow;
       sockets[fd].peerWindow = segment->window;
@@ -419,9 +516,20 @@ implementation {
          sockets[fd].retries = 0;
          sockets[fd].elapsedSeconds = 0;
       }
+      if (previousWindow != segment->window) {
+         dbg(PROJECT3_TGEN_CHANNEL,
+             "t=%s node=%d conn=%d %d:%d<-%d:%d event=WINDOW_UPDATE_RX state=%s cumAck=%d oldWnd=%d newWnd=%d outstanding=%d\n",
+             sim_time_string(), TOS_NODE_ID, fd, sockets[fd].localAddr,
+             sockets[fd].localPort, sockets[fd].remoteAddr,
+             sockets[fd].remotePort, stateName(sockets[fd].state),
+             segment->ack, previousWindow, segment->window,
+             sockets[fd].sendNext - sockets[fd].sendUna);
+      }
       if (sockets[fd].controlOutstanding) {
          if (sockets[fd].lastSegment.kindLength == TCP_CODE_FIN &&
              segment->ack == sockets[fd].lastSegment.seq + 1) {
+            logWireSegment(fd, "FIN_ACK_RX", segment->seq,
+                           segment->ack, 0, segment->window, SUCCESS);
             sockets[fd].sendUna = segment->ack;
             sockets[fd].hasOutstanding = FALSE;
             sockets[fd].controlOutstanding = FALSE;
@@ -453,6 +561,14 @@ implementation {
          sockets[fd].sendLength -= newlyAcked;
          sockets[fd].sendAcked += newlyAcked;
          sockets[fd].sendUna = segment->ack;
+         dbg(PROJECT3_TGEN_CHANNEL,
+             "t=%s node=%d conn=%d %d:%d->%d:%d event=ACK_PROGRESS state=%s cumAck=%d wnd=%d outstanding=%d ackedTotal=%d\n",
+             sim_time_string(), TOS_NODE_ID, fd, sockets[fd].localAddr,
+             sockets[fd].localPort, sockets[fd].remoteAddr,
+             sockets[fd].remotePort, stateName(sockets[fd].state),
+             segment->ack, segment->window,
+             sockets[fd].sendNext - sockets[fd].sendUna,
+             sockets[fd].sendAcked);
          if (sockets[fd].retransmitPending) {
             if (sockets[fd].retransmitCursor < sockets[fd].sendUna)
                sockets[fd].retransmitCursor = sockets[fd].sendUna;
@@ -479,7 +595,20 @@ implementation {
    void receiveData(socket_t fd, tcp_segment_t *segment) {
       uint8_t length = segmentDataLength(segment);
       if (length == 0) return;
+      dbg(PROJECT3_TGEN_CHANNEL,
+          "t=%s node=%d conn=%d %d:%d<-%d:%d event=DATA_RX state=%s seq=%d len=%d cumAck=%d wnd=%d buffered=%d\n",
+          sim_time_string(), TOS_NODE_ID, fd, sockets[fd].localAddr,
+          sockets[fd].localPort, sockets[fd].remoteAddr,
+          sockets[fd].remotePort, stateName(sockets[fd].state),
+          segment->seq, length, sockets[fd].rcvNext,
+          receiveWindow(&sockets[fd]), sockets[fd].rcvLength);
       if (length > TCP_DATA_SIZE) {
+         dbg(PROJECT3_TGEN_CHANNEL,
+             "t=%s node=%d conn=%d %d:%d<-%d:%d event=DATA_DROP state=%s reason=length seq=%d len=%d\n",
+             sim_time_string(), TOS_NODE_ID, fd, sockets[fd].localAddr,
+             sockets[fd].localPort, sockets[fd].remoteAddr,
+             sockets[fd].remotePort, stateName(sockets[fd].state),
+             segment->seq, length);
          dbg(TRANSPORT_CHANNEL,
              "Node %d TCP fd %d dropped malformed data length %d\n",
              TOS_NODE_ID, fd, length);
@@ -487,16 +616,34 @@ implementation {
       }
 
       if (sockets[fd].rcvLength > SOCKET_BUFFER_SIZE) {
+         dbg(PROJECT3_TGEN_CHANNEL,
+             "t=%s node=%d conn=%d %d:%d<-%d:%d event=DATA_DROP state=%s reason=buffer-corrupt seq=%d len=%d\n",
+             sim_time_string(), TOS_NODE_ID, fd, sockets[fd].localAddr,
+             sockets[fd].localPort, sockets[fd].remoteAddr,
+             sockets[fd].remotePort, stateName(sockets[fd].state),
+             segment->seq, length);
          sendAck(fd);
          return;
       }
       if (sockets[fd].rcvTotal > TCP_MAX_TRANSFER_BYTES ||
           length > TCP_MAX_TRANSFER_BYTES - sockets[fd].rcvTotal) {
+         dbg(PROJECT3_TGEN_CHANNEL,
+             "t=%s node=%d conn=%d %d:%d<-%d:%d event=DATA_DROP state=%s reason=transfer-limit seq=%d len=%d\n",
+             sim_time_string(), TOS_NODE_ID, fd, sockets[fd].localAddr,
+             sockets[fd].localPort, sockets[fd].remoteAddr,
+             sockets[fd].remotePort, stateName(sockets[fd].state),
+             segment->seq, length);
          sendAck(fd);
          return;
       }
 
       if (sockets[fd].peerFinReceived) {
+         dbg(PROJECT3_TGEN_CHANNEL,
+             "t=%s node=%d conn=%d %d:%d<-%d:%d event=DATA_DROP state=%s reason=after-FIN seq=%d len=%d\n",
+             sim_time_string(), TOS_NODE_ID, fd, sockets[fd].localAddr,
+             sockets[fd].localPort, sockets[fd].remoteAddr,
+             sockets[fd].remotePort, stateName(sockets[fd].state),
+             segment->seq, length);
          sendAck(fd);
          return;
       }
@@ -517,9 +664,24 @@ implementation {
              "Node %d TCP fd %d accepted data seq %d len %d next %d\n",
              TOS_NODE_ID, fd, segment->seq, length,
              sockets[fd].rcvNext);
+         dbg(PROJECT3_TGEN_CHANNEL,
+             "t=%s node=%d conn=%d %d:%d<-%d:%d event=DATA_ACCEPT state=%s seq=%d len=%d cumAck=%d wnd=%d buffered=%d\n",
+             sim_time_string(), TOS_NODE_ID, fd, sockets[fd].localAddr,
+             sockets[fd].localPort, sockets[fd].remoteAddr,
+             sockets[fd].remotePort, stateName(sockets[fd].state),
+             segment->seq, length, sockets[fd].rcvNext,
+             receiveWindow(&sockets[fd]), sockets[fd].rcvLength);
          sendAck(fd);
          signal Transport.dataReceived(fd);
       } else {
+         dbg(PROJECT3_TGEN_CHANNEL,
+             "t=%s node=%d conn=%d %d:%d<-%d:%d event=DATA_DROP state=%s reason=%s seq=%d len=%d cumAck=%d wnd=%d\n",
+             sim_time_string(), TOS_NODE_ID, fd, sockets[fd].localAddr,
+             sockets[fd].localPort, sockets[fd].remoteAddr,
+             sockets[fd].remotePort, stateName(sockets[fd].state),
+             segment->seq == sockets[fd].rcvNext ? "no-space" : "gap-or-duplicate",
+             segment->seq, length, sockets[fd].rcvNext,
+             receiveWindow(&sockets[fd]));
          dbg(TRANSPORT_CHANNEL,
              "Node %d TCP fd %d duplicate/out-of-order seq %d expected %d\n",
              TOS_NODE_ID, fd, segment->seq, sockets[fd].rcvNext);
@@ -558,6 +720,7 @@ implementation {
           sockets[fd].localPort == 0) return FAIL;
       sockets[fd].pendingChild = SOCKET_NONE;
       setState(fd, LISTEN);
+      logConnection(fd, "LISTEN");
       return SUCCESS;
    }
 
@@ -585,6 +748,7 @@ implementation {
 
       sockets[fd].remoteAddr = addr->addr;
       sockets[fd].remotePort = addr->port;
+      logConnection(fd, "CONN_ALLOC");
       sockets[fd].sendUna = TCP_INITIAL_SEQUENCE;
       sockets[fd].sendNext = TCP_INITIAL_SEQUENCE + 1;
       setState(fd, SYN_SENT);
@@ -678,13 +842,18 @@ implementation {
       tcp_segment_t *segment;
       socket_t fd;
       socket_t listener;
-      uint8_t dataLength;
+      uint8_t dataLength = 0;
 
       if (package == NULL || PACK_PROTOCOL(package) != PROTOCOL_TCP) return FAIL;
       segment = (tcp_segment_t *)package->payload;
       // Accept only handshake, pure ACK, FIN, probe, or data-only wire forms.
       if (segment->window > SOCKET_BUFFER_SIZE ||
           !decodeSegment(segment, &dataLength)) {
+         dbg(PROJECT3_TGEN_CHANNEL,
+             "t=%s node=%d conn=unknown %d:%d->%d:%d event=SEGMENT_DROP state=UNKNOWN reason=malformed len=%d wnd=%d\n",
+             sim_time_string(), TOS_NODE_ID, package->src,
+             segment->srcPort, package->dest, segment->destPort,
+             dataLength, segment->window);
          dbg(TRANSPORT_CHANNEL, "Node %d TCP dropped malformed segment\n",
              TOS_NODE_ID);
          return FAIL;
@@ -694,15 +863,30 @@ implementation {
                           package->dest, segment->destPort);
       if (fd == SOCKET_NONE && segment->kindLength == TCP_CODE_SYN) {
          // All nodes use ISN zero so plain integer comparisons remain no-wrap safe.
-         if (segment->seq != TCP_INITIAL_SEQUENCE) return FAIL;
+         if (segment->seq != TCP_INITIAL_SEQUENCE) {
+            dbg(PROJECT3_TGEN_CHANNEL,
+                "t=%s node=%d conn=unknown %d:%d->%d:%d event=SYN_REJECT state=NO_CONNECTION reason=invalid-ISN seq=%d\n",
+                sim_time_string(), TOS_NODE_ID, package->src,
+                segment->srcPort, package->dest, segment->destPort,
+                segment->seq);
+            return FAIL;
+         }
          listener = findListener(package->dest, segment->destPort);
          if (listener == SOCKET_NONE) {
+            dbg(PROJECT3_TGEN_CHANNEL,
+                "t=%s node=%d conn=unknown %d:%d->%d:%d event=SYN_REJECT state=NO_LISTENER reason=no-listener\n",
+                sim_time_string(), TOS_NODE_ID, package->src,
+                segment->srcPort, package->dest, segment->destPort);
             dbg(TRANSPORT_CHANNEL,
                 "Node %d TCP refused SYN from %d port %d: no listener\n",
                 TOS_NODE_ID, package->src, segment->srcPort);
             return FAIL;
          }
          if (sockets[listener].pendingChild != SOCKET_NONE) {
+            dbg(PROJECT3_TGEN_CHANNEL,
+                "t=%s node=%d conn=unknown %d:%d->%d:%d event=SYN_REJECT state=LISTEN reason=accept-slot-busy\n",
+                sim_time_string(), TOS_NODE_ID, package->src,
+                segment->srcPort, package->dest, segment->destPort);
             dbg(TRANSPORT_CHANNEL,
                 "Node %d TCP refused SYN: listener accept slot is occupied\n",
                 TOS_NODE_ID);
@@ -711,6 +895,10 @@ implementation {
 
          fd = allocateSocket();
          if (fd == SOCKET_NONE) {
+            dbg(PROJECT3_TGEN_CHANNEL,
+                "t=%s node=%d conn=unknown %d:%d->%d:%d event=SYN_REJECT state=LISTEN reason=connection-table-full\n",
+                sim_time_string(), TOS_NODE_ID, package->src,
+                segment->srcPort, package->dest, segment->destPort);
             dbg(TRANSPORT_CHANNEL,
                 "Node %d TCP refused SYN: no connection record available\n",
                 TOS_NODE_ID);
@@ -720,6 +908,7 @@ implementation {
          sockets[fd].localPort = segment->destPort;
          sockets[fd].remoteAddr = package->src;
          sockets[fd].remotePort = segment->srcPort;
+         logConnection(fd, "CONN_ALLOC");
          sockets[fd].sendNext = TCP_INITIAL_SEQUENCE + 1;
          sockets[fd].sendUna = TCP_INITIAL_SEQUENCE;
          sockets[fd].peerWindow = segment->window;
@@ -727,6 +916,8 @@ implementation {
          sockets[fd].remoteInitialSequence = segment->seq;
          sockets[listener].pendingChild = fd;
          setState(fd, SYN_RCVD);
+         logWireSegment(fd, "SYN_RX", segment->seq, segment->ack, 0,
+                        segment->window, SUCCESS);
          sendSegment(fd, TCP_CODE_SYN_ACK, TCP_INITIAL_SEQUENCE,
                      sockets[fd].rcvNext, NULL, 0, TRUE);
          // Keep SYN-ACK available after its ACK so duplicate SYNs get the same reply.
@@ -736,6 +927,10 @@ implementation {
       }
 
       if (!validSocket(fd)) {
+         dbg(PROJECT3_TGEN_CHANNEL,
+             "t=%s node=%d conn=unknown %d:%d->%d:%d event=SEGMENT_DROP state=NO_CONNECTION reason=unmatched\n",
+             sim_time_string(), TOS_NODE_ID, package->src,
+             segment->srcPort, package->dest, segment->destPort);
          dbg(TRANSPORT_CHANNEL,
              "Node %d TCP dropped unmatched segment src %d:%d dest %d:%d\n",
              TOS_NODE_ID, package->src, segment->srcPort,
@@ -746,6 +941,8 @@ implementation {
       if (sockets[fd].state == SYN_RCVD &&
           segment->kindLength == TCP_CODE_SYN &&
           segment->seq == sockets[fd].remoteInitialSequence) {
+         logWireSegment(fd, "SYN_DUP_RX", segment->seq, segment->ack,
+                        0, segment->window, SUCCESS);
          resendOutstanding(fd);
          return SUCCESS;
       }
@@ -754,6 +951,8 @@ implementation {
          if (segment->kindLength == TCP_CODE_SYN_ACK &&
              segment->seq == TCP_INITIAL_SEQUENCE &&
              segment->ack == sockets[fd].sendNext) {
+            logWireSegment(fd, "SYN_ACK_RX", segment->seq, segment->ack, 0,
+                           segment->window, SUCCESS);
             sockets[fd].hasOutstanding = FALSE;
             sockets[fd].controlOutstanding = FALSE;
             sockets[fd].sendUna = segment->ack;
@@ -764,6 +963,8 @@ implementation {
             sendAck(fd);
             signal Transport.connectionEstablished(fd);
          } else {
+            logWireSegment(fd, "SYN_ACK_DROP", segment->seq,
+                           segment->ack, 0, segment->window, FAIL);
             dbg(TRANSPORT_CHANNEL,
                 "Node %d TCP fd %d ignored invalid SYN-ACK ack %d\n",
                 TOS_NODE_ID, fd, segment->ack);
@@ -775,6 +976,8 @@ implementation {
          if (segment->kindLength == TCP_CODE_ACK &&
              segment->ack == sockets[fd].sendNext &&
              segment->seq == sockets[fd].rcvNext) {
+            logWireSegment(fd, "HANDSHAKE_ACK_RX", segment->seq,
+                           segment->ack, 0, segment->window, SUCCESS);
             sockets[fd].hasOutstanding = FALSE;
             sockets[fd].controlOutstanding = FALSE;
             sockets[fd].sendUna = segment->ack;
@@ -782,6 +985,8 @@ implementation {
             setState(fd, ESTABLISHED);
             signal Transport.connectionEstablished(fd);
          } else {
+            logWireSegment(fd, "HANDSHAKE_ACK_DROP", segment->seq,
+                           segment->ack, 0, segment->window, FAIL);
             dbg(TRANSPORT_CHANNEL,
                 "Node %d TCP fd %d ignored invalid handshake ACK\n",
                 TOS_NODE_ID, fd);
@@ -793,6 +998,8 @@ implementation {
           segment->kindLength == TCP_CODE_SYN_ACK &&
           segment->ack == TCP_INITIAL_SEQUENCE + 1 &&
           segment->seq == sockets[fd].remoteInitialSequence) {
+         logWireSegment(fd, "SYN_ACK_DUP_RX", segment->seq, segment->ack,
+                        0, segment->window, SUCCESS);
          sendAck(fd);
          return SUCCESS;
       }
@@ -803,6 +1010,8 @@ implementation {
           sockets[fd].handshakeReply.kindLength == TCP_CODE_SYN_ACK) {
          // The tuple already exists; replay the original SYN-ACK without allocating.
          uint8_t payload[PACKET_MAX_PAYLOAD_SIZE];
+         logWireSegment(fd, "SYN_DUP_RX", segment->seq, segment->ack,
+                        0, segment->window, SUCCESS);
          memset(payload, 0, sizeof(payload));
          memcpy(payload, &sockets[fd].handshakeReply,
                 sizeof(tcp_segment_t));
@@ -816,6 +1025,8 @@ implementation {
              sockets[fd].state == FIN_WAIT_2 ||
              sockets[fd].state == LAST_ACK ||
              sockets[fd].state == TIME_WAIT) {
+            logWireSegment(fd, "WINDOW_PROBE_RX", segment->seq,
+                           segment->ack, 0, segment->window, SUCCESS);
             sockets[fd].peerWindow = segment->window;
             sendAck(fd); // A probe requests a window update, not application data.
             pumpData(fd);
@@ -834,6 +1045,8 @@ implementation {
       }
 
       if (segment->kindLength == TCP_CODE_FIN) {
+         logWireSegment(fd, "FIN_RX", segment->seq, segment->ack, 0,
+                        segment->window, SUCCESS);
          sockets[fd].peerWindow = segment->window;
          if (!sockets[fd].peerFinReceived &&
              segment->seq == sockets[fd].rcvNext) {
@@ -914,6 +1127,12 @@ implementation {
             }
             sockets[fd].elapsedSeconds++;
             if (sockets[fd].elapsedSeconds >= TCP_RTO_SECONDS) {
+               dbg(PROJECT3_TGEN_CHANNEL,
+                   "t=%s node=%d conn=%d %d:%d->%d:%d event=WINDOW_PROBE_TIMEOUT state=%s retry=%d wnd=0\n",
+                   sim_time_string(), TOS_NODE_ID, fd,
+                   sockets[fd].localAddr, sockets[fd].localPort,
+                   sockets[fd].remoteAddr, sockets[fd].remotePort,
+                   stateName(sockets[fd].state), sockets[fd].retries);
                if (sockets[fd].retries >= TCP_MAX_RETRIES) {
                   reportFailure(fd, TCP_FAILURE_RETRY_LIMIT);
                } else {
@@ -926,6 +1145,14 @@ implementation {
          } else if (sockets[fd].hasOutstanding) {
             sockets[fd].elapsedSeconds++;
             if (sockets[fd].elapsedSeconds >= TCP_RTO_SECONDS) {
+               dbg(PROJECT3_TGEN_CHANNEL,
+                   "t=%s node=%d conn=%d %d:%d->%d:%d event=TIMEOUT state=%s retry=%d sendUna=%d sendNext=%d peerWnd=%d\n",
+                   sim_time_string(), TOS_NODE_ID, fd,
+                   sockets[fd].localAddr, sockets[fd].localPort,
+                   sockets[fd].remoteAddr, sockets[fd].remotePort,
+                   stateName(sockets[fd].state), sockets[fd].retries,
+                   sockets[fd].sendUna, sockets[fd].sendNext,
+                   sockets[fd].peerWindow);
                if (dataBatchUsed) {
                   // Preserve the two-packet timer budget; retry next timer tick.
                   sockets[fd].elapsedSeconds = TCP_RTO_SECONDS - 1;

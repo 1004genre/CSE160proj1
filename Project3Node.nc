@@ -52,6 +52,11 @@ implementation {
    socket_t serverSocket = SOCKET_NONE;
    test_connection_t testConnections[MAX_NUM_OF_SOCKETS];
 
+#ifndef TOSSIM
+   // Only the simulator has virtual time; keep hardware builds compilable.
+#define sim_time_string() "hardware"
+#endif
+
    void makePack(pack *p, uint16_t src, uint16_t dest, uint8_t ttl,
                  uint8_t protocol, uint16_t seq, const void *payload);
    bool sendRouted(pack *p);
@@ -60,6 +65,22 @@ implementation {
    test_connection_t *testConnection(socket_t fd) {
       if (fd >= MAX_NUM_OF_SOCKETS || !testConnections[fd].active) return NULL;
       return &testConnections[fd];
+   }
+
+   // Keep one compact progress line per producer offer or consumer read.
+   void logTestProgress(socket_t fd, const char *event) {
+      test_connection_t *record = testConnection(fd);
+      const char *state;
+      if (record == NULL) return;
+      state = !record->isClient && record->consumerPaused ? "PAUSED" :
+              record->closeStarted ? "CLOSING" :
+              record->established ? "ESTABLISHED" : "CONNECTING";
+      dbg(PROJECT3_TGEN_CHANNEL,
+          "t=%s node=%d conn=%d %d:%d->%d:%d event=%s state=%s accepted=%d acknowledged=%d consumed=%d target=%d mismatches=%d\n",
+          sim_time_string(), TOS_NODE_ID, fd, record->localAddress,
+          record->localPort, record->remoteAddress, record->remotePort,
+          event, state, record->acceptedBytes, record->acknowledgedBytes,
+          record->consumedBytes, record->requestedBytes, record->mismatches);
    }
 
    void clearTestConnection(socket_t fd) {
@@ -92,10 +113,12 @@ implementation {
       if (record->acknowledgedBytes != record->acceptedBytes) return;
       if (call Transport.close(fd) == SUCCESS) {
          record->closeStarted = TRUE;
+         logTestProgress(fd, "CLIENT_FIN_REQUEST");
          dbg(TRANSPORT_CHANNEL,
              "Node %d TCP client close started after %d/%d bytes acknowledged\n",
              TOS_NODE_ID, record->acknowledgedBytes, record->requestedBytes);
       } else {
+         logTestProgress(fd, "CLIENT_FIN_FAILURE");
          dbg(TRANSPORT_CHANNEL,
              "Node %d TCP client close failed before FIN\n", TOS_NODE_ID);
       }
@@ -120,6 +143,7 @@ implementation {
       // Producer offset advances only by bytes Transport.write accepted locally.
       record->acceptedBytes += accepted;
       record->acknowledgedBytes = call Transport.sendAcknowledged(fd);
+      logTestProgress(fd, "APP_ACCEPT");
       dbg(TRANSPORT_CHANNEL,
           "Node %d TCP client accepted %d/%d, acknowledged %d\n",
           TOS_NODE_ID, record->acceptedBytes, record->requestedBytes,
@@ -142,6 +166,8 @@ implementation {
       }
       record->consumedBytes += amount;
       if (amount > 0) {
+         logTestProgress(fd, record->mismatches == 0 ?
+                         "APP_CONTENT_OK" : "APP_CONTENT_MISMATCH");
          dbg(TRANSPORT_CHANNEL,
              "Node %d TCP consumer fd %d read chunk %d; consumed %d; pattern %s; mismatches %d\n",
              TOS_NODE_ID, fd, amount, record->consumedBytes,
@@ -176,6 +202,7 @@ implementation {
                record->consumerPaused = FALSE;
                record->autoPause = FALSE;
                if (record->sawZeroWindow) record->dropNextWindowUpdate = TRUE;
+               logTestProgress(fd, "CONSUMER_RESUME");
                dbg(TRANSPORT_CHANNEL,
                    "Node %d TCP test consumer resumed fd %d%s\n", TOS_NODE_ID, fd,
                    record->dropNextWindowUpdate ?
@@ -314,6 +341,7 @@ implementation {
       testConnections[fd].localPort = sourcePort;
       testConnections[fd].remotePort = destinationPort;
       testConnections[fd].requestedBytes = transferBytes;
+      logTestProgress(fd, "CONN_ALLOC");
       dbg(TRANSPORT_CHANNEL,
           "Node %d TCP test client connecting to %d:%d for %d bytes\n",
           TOS_NODE_ID, serverAddress, destinationPort, transferBytes);
@@ -347,6 +375,7 @@ implementation {
          return;
       }
       record->closeRequested = TRUE;
+      logTestProgress(fd, "CLIENT_CLOSE_REQUEST");
       dbg(TRANSPORT_CHANNEL,
           "Node %d TCP client close requested for %d:%d -> %d:%d\n",
           TOS_NODE_ID, clientAddress, sourcePort,
@@ -373,6 +402,7 @@ implementation {
       record->consumerPaused = TRUE;
       record->autoPause = FALSE;
       record->pauseTicks = 0;
+      logTestProgress(fd, "CONSUMER_PAUSE");
       dbg(TRANSPORT_CHANNEL,
           "Node %d paused TCP consumer fd %d for %d:%d -> %d:%d\n",
           TOS_NODE_ID, fd, clientAddress, sourcePort, serverAddress, listenPort);
@@ -397,6 +427,7 @@ implementation {
       record->consumerPaused = FALSE;
       record->autoPause = FALSE;
       record->pauseTicks = 0;
+      logTestProgress(fd, "CONSUMER_RESUME");
       dbg(TRANSPORT_CHANNEL,
           "Node %d resumed TCP consumer fd %d for %d:%d -> %d:%d\n",
           TOS_NODE_ID, fd, clientAddress, sourcePort, serverAddress, listenPort);
@@ -438,6 +469,7 @@ implementation {
          testConnections[accepted].autoPause = TRUE;
          testConnections[accepted].pauseTicks =
             TCP_CONSUMER_PAUSE_MS / TCP_CONSUMER_INTERVAL_MS;
+         logTestProgress(accepted, "CONN_ACCEPT");
          dbg(TRANSPORT_CHANNEL,
              "Node %d TCP server accepted connection fd %d\n",
              TOS_NODE_ID, fd);
@@ -469,6 +501,7 @@ implementation {
       test_connection_t *record = testConnection(fd);
       if (record == NULL) return;
       if (!record->isClient) {
+         logTestProgress(fd, "APP_CONTENT_RESULT");
          dbg(TRANSPORT_CHANNEL,
              "Node %d TCP server connection %d:%d -> %d:%d closed after %d bytes; mismatches %d\n",
              TOS_NODE_ID, record->remoteAddress, record->remotePort,
@@ -476,6 +509,10 @@ implementation {
              record->consumedBytes, record->mismatches);
       } else {
          record->acknowledgedBytes = call Transport.sendAcknowledged(fd);
+         logTestProgress(fd,
+             record->acceptedBytes == record->requestedBytes &&
+             record->acknowledgedBytes == record->requestedBytes ?
+                "APP_CLOSE_SUCCESS" : "APP_CLOSE_FAILURE");
          dbg(TRANSPORT_CHANNEL,
              "Node %d TCP client %d:%d -> %d:%d close %s: accepted %d acknowledged %d of %d\n",
              TOS_NODE_ID, record->localAddress, record->localPort,
@@ -491,11 +528,13 @@ implementation {
 
    event void Transport.connectionFailed(socket_t fd, uint8_t reason) {
       test_connection_t *record = testConnection(fd);
+      if (record != NULL && record->isClient)
+         record->acknowledgedBytes = call Transport.sendAcknowledged(fd);
+      logTestProgress(fd, "APP_TRANSFER_FAILURE");
       dbg(TRANSPORT_CHANNEL,
           "Node %d TCP connection fd %d failed, reason %d\n",
           TOS_NODE_ID, fd, reason);
       if (record != NULL && record->isClient) {
-         record->acknowledgedBytes = call Transport.sendAcknowledged(fd);
          dbg(TRANSPORT_CHANNEL,
              "Node %d TCP client transfer failed: accepted %d acknowledged %d of %d\n",
              TOS_NODE_ID, record->acceptedBytes, record->acknowledgedBytes,

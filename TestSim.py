@@ -24,6 +24,8 @@ class TestSim:
     FLOODING_CHANNEL = "flooding"
     ROUTING_CHANNEL = "routing"
     TRANSPORT_CHANNEL = "transport"
+    # Test harness subscribes separately to concise Project3TGen events.
+    PROJECT3_TGEN_CHANNEL = "Project3TGen"
     HASHMAP_CHANNEL = "hashmap"
 
     def __init__(self):

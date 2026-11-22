@@ -268,7 +268,12 @@ names to the starter `TestSim.testServer`, `testClient`, and `closeTestClient`
 helpers, then the dispatcher signals `setTestServer`, `setTestClient`, and
 `closeTestClient` in `CommandHandler`. The receiver keeps a separate
 timer-driven consumer record per accepted connection and reports consumed
-totals and byte mismatches on close.
+totals and byte mismatches on close. The runner enables `Project3TGen` for
+timestamped connection, control, data, timeout, flow-control, and application
+progress events; it prints one consumer summary per read chunk, never one line
+per byte. The `routing` channel is enabled independently for network diagnosis.
+Pass `--transport-debug` to add the more verbose legacy transport channel while
+keeping the concise TGen event stream visible.
 The producer uses only a bounded 128-byte scratch buffer, advances its offset
 by locally accepted bytes, and regenerates byte `k` as `k % 256`; a 300-byte run
 therefore repeats 0 through 43 after 0 through 255. Accepted, acknowledged,

@@ -17,7 +17,8 @@ from TestSim import TestSim
 
 
 class Project3Run(object):
-    def __init__(self, topology="p3_midreview.topo", noise="no_noise.txt"):
+    def __init__(self, topology="p3_midreview.topo", noise="no_noise.txt",
+                 transportDebug=False):
         self.sim = TestSim()
         self.expectedTransfers = {}
         log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
@@ -28,8 +29,12 @@ class Project3Run(object):
         self.sim.loadTopo(topology)
         self.sim.loadNoise(noise)
         self.sim.bootAll()
-        for channel in (self.sim.COMMAND_CHANNEL, self.sim.NEIGHBOR_CHANNEL,
-                        self.sim.ROUTING_CHANNEL, self.sim.TRANSPORT_CHANNEL):
+        channels = [self.sim.COMMAND_CHANNEL, self.sim.NEIGHBOR_CHANNEL,
+                    self.sim.ROUTING_CHANNEL, self.sim.PROJECT3_TGEN_CHANNEL]
+        # The detailed transport channel is opt-in; TGen stays concise and complete.
+        if transportDebug:
+            channels.append(self.sim.TRANSPORT_CHANNEL)
+        for channel in channels:
             self.sim.addChannel(channel, self.output)
         self.sim.runForSeconds(30)
 
@@ -67,14 +72,17 @@ class Project3Run(object):
         self.output.flush()
         with open(self.logPath, "r") as log_file:
             log = log_file.read()
-        endpoint = re.escape("{0}:{1} -> {2}:{3}".format(
+        endpoint = re.escape("{0}:{1}->{2}:{3}".format(
             clientAddress, srcPort, serverAddress, destPort))
         server = re.search(
-            r"TCP server connection " + endpoint +
-            r" closed after (\d+) bytes; mismatches (\d+)", log)
+            r"node=" + str(serverAddress) + r" conn=\d+ " +
+            re.escape("{0}:{1}->{2}:{3}".format(
+                serverAddress, destPort, clientAddress, srcPort)) +
+            r" event=APP_CONTENT_RESULT .*?consumed=(\d+).*?mismatches=(\d+)",
+            log)
         client = re.search(
-            r"TCP client " + endpoint +
-            r" close succeeded: accepted (\d+) acknowledged (\d+) of (\d+)",
+            r"node=" + str(clientAddress) + r" conn=\d+ " + endpoint +
+            r" event=APP_CLOSE_SUCCESS .*?accepted=(\d+) acknowledged=(\d+) .*?target=(\d+)",
             log)
         # Length and mismatch checks complement the byte pattern's 256-byte period.
         if (server is None or int(server.group(1)) != expected or
@@ -95,9 +103,11 @@ def main():
     parser = argparse.ArgumentParser(description="Run the Project 3 TOSSIM demo")
     parser.add_argument("--topology", default="p3_midreview.topo")
     parser.add_argument("--noise", default="no_noise.txt")
+    parser.add_argument("--transport-debug", action="store_true",
+                        help="also include the verbose transport debug channel")
     args = parser.parse_args()
 
-    runner = Project3Run(args.topology, args.noise)
+    runner = Project3Run(args.topology, args.noise, args.transport_debug)
     runner.cmdTestServer(3, 80)
     runner.runForSeconds(1)
     runner.cmdTestClient(1, 3, 81, 80, 300)

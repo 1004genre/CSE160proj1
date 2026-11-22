@@ -21,7 +21,9 @@ def main():
         sim.loadNoise("no_noise.txt")
         sim.bootAll()
         for channel in (sim.COMMAND_CHANNEL, sim.NEIGHBOR_CHANNEL,
-                        sim.ROUTING_CHANNEL, sim.TRANSPORT_CHANNEL):
+                        sim.ROUTING_CHANNEL, sim.TRANSPORT_CHANNEL,
+                        # Keep the structured transport trace in the review log.
+                        sim.PROJECT3_TGEN_CHANNEL):
             sim.addChannel(channel, output)
 
         sim.runForSeconds(30)

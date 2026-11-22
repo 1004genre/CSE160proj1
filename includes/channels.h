@@ -15,6 +15,8 @@ char ROUTING_CHANNEL[]="routing";
 
 // Project 3
 char TRANSPORT_CHANNEL[]="transport";
+// Timestamped transport test events stay separate from routing diagnostics.
+char PROJECT3_TGEN_CHANNEL[]="Project3TGen";
 
 // Personal Debuggin Channels for some of the additional models implemented.
 char HASHMAP_CHANNEL[]="hashmap";
