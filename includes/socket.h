@@ -50,11 +50,15 @@ typedef struct socket_store_t{
     uint16_t remoteInitialSequence;
     socket_t pendingChild;
     uint8_t sendBuff[SOCKET_BUFFER_SIZE];
-    // sendLength counts bytes accepted locally; sendAcked counts peer transport ACKs.
+    // Buffer holds outstanding prefix plus unsent suffix; totals track accepted/ACKed.
     uint16_t sendLength;
+    uint16_t sendTotal;
     uint16_t sendAcked;
+    // sendUna is oldest unacked; sendNext is next unsent sequence position.
     uint16_t sendNext;
     uint16_t sendUna;
+    uint8_t senderWindow; // Local fixed upper bound for outstanding data.
+    uint8_t peerWindow;   // Latest window from a valid peer ACK or handshake.
     uint8_t rcvdBuff[SOCKET_BUFFER_SIZE];
     // rcvLength is received data not yet consumed by the local test application.
     uint16_t rcvLength;
@@ -62,6 +66,7 @@ typedef struct socket_store_t{
     tcp_segment_t lastSegment;
     tcp_segment_t handshakeReply;
     bool hasOutstanding;
+    bool controlOutstanding;
     bool closeRequested;
     bool peerFinReceived;
     bool localFinAcknowledged;

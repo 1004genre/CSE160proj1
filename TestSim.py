@@ -179,7 +179,7 @@ class TestSim:
         message.set_seq(seq)
         message.set_TTL(ttl + 1)
         message.set_protocol(0)
-        message.set_payload([0] * 20)
+        message.set_payload([0] * 21)
         packet = self.t.newPacket()
         packet.setType(message.get_amType())
         packet.setData(message.data)

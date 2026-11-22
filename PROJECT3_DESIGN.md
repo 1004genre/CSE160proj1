@@ -5,13 +5,13 @@
 - Project 2 has a separate distance-vector build and multi-hop routing path.
 - `lib/interfaces/Transport.nc` defines the transport API, and
   `includes/socket.h` defines the bounded connection records.
-- `Project3C` / `Project3Node` and `TransportP` now implement the mid-review
-  setup, stop-and-wait data transfer, and orderly-close path over routed
+- `Project3C` / `Project3Node` and `TransportP` implement connection setup,
+  a fixed sliding sender window, and orderly close over routed
   `PROTOCOL_TCP` packets.
-- `tests/project3/mid_review.py` exercises a three-node line and checks the
-  handshake, byte-exact 32-byte transfer, and close. Sliding windows,
-  receiver-driven flow control, concurrent active connections, and loss
-  injection are still future work.
+- `tests/project3/mid_review.py` exercises a three-node line, verifies multiple
+  outstanding segments in a byte-exact 32-byte transfer, and checks close.
+  Zero-window recovery, concurrent active connections, and deterministic loss
+  injection still need dedicated validation.
 
 ## Mid-review target
 
@@ -20,16 +20,15 @@ Demonstrate on a stable three-node line (1-2-3), after routes converge:
 1. Node 3 starts listening; node 1 opens a connection to it.
 2. Logs show `SYN -> SYN-ACK -> ACK` and the client and server reaching
    `ESTABLISHED`.
-3. Node 1 transfers a short, identifiable byte pattern using stop-and-wait;
-   node 3 checks the bytes and returns a cumulative ACK.
+3. Node 1 transfers an identifiable byte pattern with a four-segment sender
+   window; node 3 checks the bytes and returns cumulative ACKs.
 4. Node 1 initiates an orderly close after accepted data is acknowledged;
    logs show the FIN/ACK exchange, the peer FIN/final ACK, and cleanup.
-5. The demo can explain the connection record, retry timer, and the planned
-   sliding-window and receive-flow-control work.
+5. The demo exposes the connection record, retry timer, outstanding byte
+   ranges, and advertised-window behavior.
 
-The mid-review does not require the final loss, flow-control, or full sliding
-window tests, but the code should be structured so those stages extend the
-same engine.
+The mid-review demonstrates a fixed sliding window. Full loss, zero-window,
+and long-transfer tests remain separate validation stages.
 
 ## Proposed architecture and invariants
 
@@ -50,14 +49,12 @@ same engine.
   positions.
 - The implemented transport header contains source and destination ports,
   flags, data length, 16-bit sequence and acknowledgment numbers, and an
-  advertised receive window. The encoded header is 9 bytes; the fixed 20-byte
-  network payload therefore carries at most 11 data bytes per segment.
-- The Project 3 build reports `sizeof(pack)=28` and
-  `sizeof(tcp_segment_t)=20`: an 8-byte network header plus 9-byte transport
-  header leaves 11 bytes for data. This honors the existing
-  `TOSH_DATA_LENGTH=28`; the assignment's 29-byte budget wording remains a
-  configuration discrepancy to confirm before final submission. No MTU
-  increase is made.
+  advertised receive window. The encoded header is 9 bytes; the 21-byte
+  network payload therefore carries at most 12 data bytes per segment.
+- The Project 3 packet budget is the course's 29 bytes: an 8-byte network
+  header plus a 21-byte transport payload. The 9-byte transport header leaves
+  12 bytes for data. `TOSH_DATA_LENGTH` is set to 29 so the configured TinyOS
+  payload matches that budget; no extra bytes are added for AM fields.
 - Start with a documented no-wrap sequence range for required tests. Keep
   network packet IDs distinct from transport byte sequence numbers.
 - Maintain these invariants: acknowledged bytes never exceed sent bytes;
@@ -73,7 +70,7 @@ same engine.
 | Server receives matching final ACK | Stop handshake timer; preserve listener | ESTABLISHED |
 | Established endpoint receives in-order data | Store only if it fits; advance expected byte; send cumulative ACK | ESTABLISHED |
 | Established endpoint receives duplicate/out-of-order data | Do not redeliver or skip a gap; send current cumulative ACK | ESTABLISHED |
-| Client has no queued or unacknowledged bytes | Send FIN using the next sequence; start retry timer | FIN_WAIT |
+| Closing endpoint has no queued or unacknowledged bytes | Send FIN using the next sequence; start retry timer | FIN_WAIT / LAST_ACK |
 | Peer receives FIN in order | ACK it; drain its own data; send its FIN | CLOSE_WAIT / LAST_ACK |
 | Client receives peer FIN | Send final ACK; retain closing state for duplicate FINs | TIME_WAIT |
 | Retry budget exhausted | Report failure and release bounded state safely | CLOSED |
@@ -82,8 +79,9 @@ The mid-review implementation uses a fixed 3-second retransmission timeout,
 five retransmissions, and explicit failure reporting. It was exercised on the
 two-hop demo route; calibrate it again for longer routes and loss scenarios.
 Duplicate SYN and data packets are handled idempotently; expand tests for
-duplicate FIN and lost final ACK during the full-project stages. The client
-retains its TIME_WAIT record for 6 seconds (twice the current RTO) so it can
+duplicate FIN and lost final ACK during the full-project stages. Both endpoints
+retain the tuple for 18 seconds: the 3-second initial RTO plus five retry
+intervals. This covers the full FIN retry horizon and lets the client
 acknowledge a retransmitted FIN if the first final ACK is lost.
 
 ## Work plan
@@ -92,10 +90,10 @@ acknowledge a retransmitted FIN if the first final ACK is lost.
 |---|---|---|
 | 0. Packet and routing boundary (implemented) | Confirm current packet size; encode the TCP header; add routed TCP dispatch and `Project3C` | Project 3 builds; compiled packet/segment sizes are logged; Project 1/2 builds remain valid |
 | 1. Connection setup (implemented) | Static tuple-indexed records, persistent listener, SYN/SYN-ACK/ACK, duplicate SYN handling, handshake retry | Repeatable 1-2-3 handshake; listener remains available |
-| 2. Stop-and-wait data (implemented) | Retained 128-byte send buffer, 11-byte segments, in-order receiver, cumulative ACK, duplicate suppression, data retry | Demo transfers 32 bytes byte-exactly over 1-2-3 |
+| 2. Fixed sliding-window data (implemented) | Retained 128-byte send buffer, 12-byte segments, four-segment sender window, advertised peer-window limit, in-order receiver, cumulative ACK, go-back-N retry | Demo confirms 24 bytes outstanding and transfers 32 bytes byte-exactly over 1-2-3 |
 | 3. Orderly close (implemented) | Drain data before FIN; peer FIN/final ACK; bounded retry and TIME_WAIT cleanup | Mid-review script completes setup, transfer, and teardown with state logs |
-| 4. Fixed sliding window | Multiple outstanding segments; sender bounded by configured and advertised windows; partial segments; ACK validation | At least two outstanding segments; byte-exact transfer of at least 1,024 bytes |
-| 5. Receive flow control | 128-byte receive occupancy; test consumer pauses/resumes; window update/probe for lost reopening update | Sender stops at zero window, resumes, and receiver never overflows |
+| 4. Longer sliding-window validation | Transfer at least 1,024 bytes; validate partial ACK advancement and sequence-range retransmission | Byte-exact long transfer with bounded sender and receiver buffers |
+| 5. Zero-window validation | 128-byte receive occupancy; test consumer pauses/resumes; probe/recovery for lost reopening update | Sender stops at zero window, resumes, and receiver never overflows |
 | 6. Independent connections and failure | Two simultaneous connection records; fair bounded work; unavailable-listener and retry-exhaustion cleanup | One connection’s pause/timeout does not block another; all failures release state |
 | 7. Validation and submission docs | Deterministic drop hooks, noisy run, reproducible scripts, README results, one-page design PDF, discussion answers | All six required validation scenarios are repeatable and documented |
 
@@ -153,13 +151,13 @@ reliability, sliding-window, flow-control, and cleanup behavior is validated.
 
 Run `make micaz sim COMPONENT=Project3C`, then
 `python2 tests/project3/mid_review.py`. The script starts a node 3 listener,
-connects node 1 over the bidirectional 1-2-3 line, sends bytes `0..31` in
-stop-and-wait segments, and initiates close after all bytes are acknowledged.
+connects node 1 over the bidirectional 1-2-3 line, sends bytes `0..31` through
+the fixed four-segment window, and initiates close after all bytes are acknowledged.
 It checks the connection-state transitions, exact pattern verification, and
 both endpoints' cleanup. Full TOSSIM output is written to
 `logs/project3-mid-review.log`.
 
 For a live explanation, point out that the listener stays separate from its
-accepted child; show the 9-byte header/11-byte data budget, cumulative ACKs,
-the fixed 3-second retry timer, and the next planned stages for a sliding
-window and receive-window flow control.
+accepted child; show the 9-byte header/12-byte data budget, multiple
+outstanding segments, cumulative ACKs, the 48-byte sender window, advertised
+receive windows, and the fixed 3-second retry timer.

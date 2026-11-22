@@ -17,6 +17,8 @@ enum {
    TCP_MAX_RETRIES = 5, // Fail after five retries plus one final timeout interval.
    // 18s retains tuples for the 3s initial RTO and all five 3s retries.
    TCP_TIME_WAIT_SECONDS = TCP_RTO_SECONDS * (TCP_MAX_RETRIES + 1),
+   // Four maximum-sized segments may be outstanding when the peer window permits.
+   TCP_SENDER_WINDOW_SIZE = TCP_DATA_SIZE * 4,
    TCP_FAILURE_RETRY_LIMIT = 1,
    TCP_TIMER_INTERVAL_MS = 1000
 };

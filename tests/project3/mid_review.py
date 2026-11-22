@@ -41,6 +41,7 @@ def main():
         "state CLOSED -> SYN_RCVD",
         "state SYN_SENT -> ESTABLISHED",
         "state SYN_RCVD -> ESTABLISHED",
+        "outstanding 24/48",
         "pattern valid",
         "total 32",
         "TCP client close requested",

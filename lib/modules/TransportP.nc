@@ -71,6 +71,7 @@ implementation {
             sockets[fd].allocated = TRUE;
             sockets[fd].state = CLOSED;
             sockets[fd].pendingChild = SOCKET_NONE;
+            sockets[fd].senderWindow = TCP_SENDER_WINDOW_SIZE;
             return fd;
          }
       }
@@ -164,6 +165,7 @@ implementation {
       if (track) {
          memcpy(&sockets[fd].lastSegment, &segment, sizeof(segment));
          sockets[fd].hasOutstanding = TRUE;
+         sockets[fd].controlOutstanding = TRUE;
          sockets[fd].retries = 0;
          sockets[fd].elapsedSeconds = 0;
       }
@@ -175,12 +177,31 @@ implementation {
       return result;
    }
 
+   void sendDataRange(socket_t fd, uint16_t sequence, uint16_t offset,
+                      uint16_t length) {
+      uint8_t chunk;
+      while (length > 0) {
+         chunk = length > TCP_DATA_SIZE ? TCP_DATA_SIZE : length;
+         sendSegment(fd, TCP_FLAG_DATA, sequence, 0,
+                     &sockets[fd].sendBuff[offset], chunk, FALSE);
+         sequence += chunk;
+         offset += chunk;
+         length -= chunk;
+      }
+   }
+
    void resendOutstanding(socket_t fd) {
       uint8_t payload[PACKET_MAX_PAYLOAD_SIZE];
-      memset(payload, 0, sizeof(payload));
-      memcpy(payload, &sockets[fd].lastSegment,
-             sizeof(tcp_segment_t));
-      call Network.send(sockets[fd].remoteAddr, payload);
+      if (sockets[fd].controlOutstanding) {
+         memset(payload, 0, sizeof(payload));
+         memcpy(payload, &sockets[fd].lastSegment,
+                sizeof(tcp_segment_t));
+         call Network.send(sockets[fd].remoteAddr, payload);
+      } else {
+         // Go-back-N resends retained bytes with their original sequence ranges.
+         sendDataRange(fd, sockets[fd].sendUna, 0,
+                       sockets[fd].sendNext - sockets[fd].sendUna);
+      }
       dbg(TRANSPORT_CHANNEL, "Node %d TCP fd %d retransmit #%d\n",
           TOS_NODE_ID, fd, sockets[fd].retries);
    }
@@ -203,26 +224,46 @@ implementation {
    }
 
    void pumpData(socket_t fd) {
-      uint16_t remaining;
+      uint16_t outstanding;
+      uint16_t unsent;
+      uint16_t window;
+      uint16_t allowance;
       uint8_t length;
 
       if (!validSocket(fd) || sockets[fd].state != ESTABLISHED ||
-          sockets[fd].hasOutstanding) return;
+          sockets[fd].controlOutstanding) return;
 
-      if (sockets[fd].sendAcked < sockets[fd].sendLength) {
-         remaining = sockets[fd].sendLength - sockets[fd].sendAcked;
-         length = remaining > TCP_DATA_SIZE ? TCP_DATA_SIZE : remaining;
-         // Data uses its own sequence space; its acknowledgment is a separate segment.
-         sendSegment(fd, TCP_FLAG_DATA,
-                     sockets[fd].sendNext, 0,
-                     &sockets[fd].sendBuff[sockets[fd].sendAcked],
-                     length, TRUE);
+      // The buffer prefix is in flight; only its suffix is eligible for sending.
+      outstanding = sockets[fd].sendNext - sockets[fd].sendUna;
+      window = sockets[fd].senderWindow < sockets[fd].peerWindow ?
+               sockets[fd].senderWindow : sockets[fd].peerWindow;
+      unsent = sockets[fd].sendLength > outstanding ?
+               sockets[fd].sendLength - outstanding : 0;
+      while (unsent > 0 && outstanding < window) {
+         allowance = window - outstanding;
+         length = unsent > TCP_DATA_SIZE ? TCP_DATA_SIZE : unsent;
+         if (length > allowance) length = allowance;
+         if (!sockets[fd].hasOutstanding) {
+            sockets[fd].hasOutstanding = TRUE;
+            sockets[fd].controlOutstanding = FALSE;
+            sockets[fd].retries = 0;
+            sockets[fd].elapsedSeconds = 0;
+         }
+         // Fill the fixed sender window with separate data and ACK segments.
+         sendSegment(fd, TCP_FLAG_DATA, sockets[fd].sendNext, 0,
+                     &sockets[fd].sendBuff[outstanding], length, FALSE);
          sockets[fd].sendNext += length;
-         return;
+         outstanding += length;
+         unsent -= length;
+         dbg(TRANSPORT_CHANNEL,
+             "Node %d TCP fd %d window DATA seq %d len %d outstanding %d/%d\n",
+             TOS_NODE_ID, fd, sockets[fd].sendNext - length, length,
+             outstanding, window);
       }
 
-      if (sockets[fd].closeRequested) {
-         sendFin(fd, FIN_WAIT_1);
+      if (sockets[fd].closeRequested && sockets[fd].sendLength == 0 &&
+          !sockets[fd].hasOutstanding) {
+         sendFin(fd, sockets[fd].peerFinReceived ? LAST_ACK : FIN_WAIT_1);
       }
    }
 
@@ -232,32 +273,27 @@ implementation {
    }
 
    void processAck(socket_t fd, tcp_segment_t *segment) {
-      uint16_t expected;
+      uint16_t highestSent;
+      uint16_t newlyAcked;
+      uint16_t outstanding;
 
-      if (!(segment->flags & TCP_FLAG_ACK) ||
-          !sockets[fd].hasOutstanding) return;
+      if (!(segment->flags & TCP_FLAG_ACK)) return;
+      highestSent = sockets[fd].sendNext;
+      if (sockets[fd].controlOutstanding &&
+          (sockets[fd].lastSegment.flags & TCP_FLAG_FIN)) {
+         highestSent = sockets[fd].lastSegment.seq + 1;
+      }
+      // ACKs outside sent sequence space cannot move the window or free storage.
+      if (segment->ack < sockets[fd].sendUna ||
+          segment->ack > highestSent) return;
 
-      if (sockets[fd].lastSegment.flags & TCP_FLAG_DATA) {
-         expected = sockets[fd].lastSegment.seq +
-                    sockets[fd].lastSegment.dataLength;
-         if (segment->ack == expected) {
-            // Advance the peer-acknowledged count only after its cumulative ACK.
-            sockets[fd].sendUna = segment->ack;
-            sockets[fd].sendAcked +=
-               sockets[fd].lastSegment.dataLength;
-            sockets[fd].hasOutstanding = FALSE;
-            sockets[fd].elapsedSeconds = 0;
-            dbg(TRANSPORT_CHANNEL,
-                "Node %d TCP fd %d data acknowledged %d/%d\n",
-                TOS_NODE_ID, fd, sockets[fd].sendAcked,
-                sockets[fd].sendLength);
-            pumpData(fd);
-         }
-      } else if (sockets[fd].lastSegment.flags & TCP_FLAG_FIN) {
-         expected = sockets[fd].lastSegment.seq + 1;
-         if (segment->ack == expected) {
+      sockets[fd].peerWindow = segment->window;
+      if (sockets[fd].controlOutstanding) {
+         if ((sockets[fd].lastSegment.flags & TCP_FLAG_FIN) &&
+             segment->ack == sockets[fd].lastSegment.seq + 1) {
             sockets[fd].sendUna = segment->ack;
             sockets[fd].hasOutstanding = FALSE;
+            sockets[fd].controlOutstanding = FALSE;
             sockets[fd].localFinAcknowledged = TRUE;
             sockets[fd].elapsedSeconds = 0;
             if (sockets[fd].state == FIN_WAIT_1) {
@@ -270,7 +306,33 @@ implementation {
             }
             releaseIfDrained(fd);
          }
+         return;
       }
+
+      if (segment->ack > sockets[fd].sendUna) {
+         newlyAcked = segment->ack - sockets[fd].sendUna;
+         outstanding = sockets[fd].sendNext - sockets[fd].sendUna;
+         if (newlyAcked > outstanding || newlyAcked > sockets[fd].sendLength) {
+            return;
+         }
+         // Slide retained storage only over bytes cumulatively acknowledged in order.
+         memmove(sockets[fd].sendBuff,
+                 &sockets[fd].sendBuff[newlyAcked],
+                 sockets[fd].sendLength - newlyAcked);
+         sockets[fd].sendLength -= newlyAcked;
+         sockets[fd].sendAcked += newlyAcked;
+         sockets[fd].sendUna = segment->ack;
+         sockets[fd].elapsedSeconds = 0;
+         sockets[fd].retries = 0;
+         if (sockets[fd].sendUna == sockets[fd].sendNext) {
+            sockets[fd].hasOutstanding = FALSE;
+         }
+         dbg(TRANSPORT_CHANNEL,
+             "Node %d TCP fd %d data acknowledged %d/%d\n",
+             TOS_NODE_ID, fd, sockets[fd].sendAcked,
+             sockets[fd].sendTotal);
+      }
+      pumpData(fd); // An ACK or valid window update may allow another segment.
    }
 
    void receiveData(socket_t fd, tcp_segment_t *segment) {
@@ -367,7 +429,7 @@ implementation {
 
       sockets[fd].remoteAddr = addr->addr;
       sockets[fd].remotePort = addr->port;
-      sockets[fd].sendUna = 0;
+      sockets[fd].sendUna = TCP_INITIAL_SEQUENCE;
       sockets[fd].sendNext = TCP_INITIAL_SEQUENCE + 1;
       setState(fd, SYN_SENT);
       sendSegment(fd, TCP_FLAG_SYN, TCP_INITIAL_SEQUENCE, 0, NULL, 0, TRUE);
@@ -389,6 +451,10 @@ implementation {
       if (accepted > 0) {
          memcpy(&sockets[fd].sendBuff[sockets[fd].sendLength], buff, accepted);
          sockets[fd].sendLength += accepted;
+         sockets[fd].sendTotal += accepted;
+         if (!sockets[fd].hasOutstanding) {
+            sockets[fd].elapsedSeconds = 0;
+         }
          pumpData(fd);
       }
       return accepted;
@@ -443,7 +509,8 @@ implementation {
                     segment->flags == (TCP_FLAG_SYN | TCP_FLAG_ACK) ||
                     segment->flags == TCP_FLAG_FIN;
       // Accept only the handshake, pure ACK, FIN, or data-only wire forms.
-      if ((!controlOnly && segment->flags != TCP_FLAG_DATA) ||
+      if (segment->window > SOCKET_BUFFER_SIZE ||
+          (!controlOnly && segment->flags != TCP_FLAG_DATA) ||
           (controlOnly && segment->dataLength != 0) ||
           (segment->flags == TCP_FLAG_DATA &&
            (segment->dataLength == 0 ||
@@ -483,7 +550,8 @@ implementation {
          sockets[fd].remoteAddr = package->src;
          sockets[fd].remotePort = segment->srcPort;
          sockets[fd].sendNext = TCP_INITIAL_SEQUENCE + 1;
-         sockets[fd].sendUna = 0;
+         sockets[fd].sendUna = TCP_INITIAL_SEQUENCE;
+         sockets[fd].peerWindow = segment->window;
          sockets[fd].rcvNext = segment->seq + 1;
          sockets[fd].remoteInitialSequence = segment->seq;
          sockets[listener].pendingChild = fd;
@@ -517,7 +585,9 @@ implementation {
                 (TCP_FLAG_SYN | TCP_FLAG_ACK) &&
              segment->ack == sockets[fd].sendNext) {
             sockets[fd].hasOutstanding = FALSE;
+            sockets[fd].controlOutstanding = FALSE;
             sockets[fd].sendUna = segment->ack;
+            sockets[fd].peerWindow = segment->window;
             sockets[fd].rcvNext = segment->seq + 1;
             sockets[fd].remoteInitialSequence = segment->seq;
             setState(fd, ESTABLISHED);
@@ -536,7 +606,9 @@ implementation {
              segment->ack == sockets[fd].sendNext &&
              segment->seq == sockets[fd].rcvNext) {
             sockets[fd].hasOutstanding = FALSE;
+            sockets[fd].controlOutstanding = FALSE;
             sockets[fd].sendUna = segment->ack;
+            sockets[fd].peerWindow = segment->window;
             setState(fd, ESTABLISHED);
             signal Transport.connectionEstablished(fd);
          } else {
@@ -574,10 +646,14 @@ implementation {
       if (!validSocket(fd)) return SUCCESS;
 
       if (segment->dataLength > 0) {
+         // Data packets also advertise the sender's latest receive window.
+         sockets[fd].peerWindow = segment->window;
          receiveData(fd, segment);
+         pumpData(fd);
       }
 
       if (segment->flags & TCP_FLAG_FIN) {
+         sockets[fd].peerWindow = segment->window;
          if (!sockets[fd].peerFinReceived &&
              segment->seq == sockets[fd].rcvNext) {
             sockets[fd].rcvNext++;
@@ -606,6 +682,7 @@ implementation {
                sockets[fd].timeWaitExpired = FALSE;
             }
             sendAck(fd);
+            pumpData(fd);
          }
       }
 
@@ -646,6 +723,15 @@ implementation {
                   sockets[fd].elapsedSeconds = 0;
                   resendOutstanding(fd);
                }
+            }
+         } else if (sockets[fd].state == ESTABLISHED &&
+                    sockets[fd].sendLength > 0 &&
+                    sockets[fd].peerWindow == 0) {
+            // A closed peer window also gets a bounded 18-second failure deadline.
+            sockets[fd].elapsedSeconds++;
+            if (sockets[fd].elapsedSeconds >=
+                TCP_RTO_SECONDS * (TCP_MAX_RETRIES + 1)) {
+               reportFailure(fd, TCP_FAILURE_RETRY_LIMIT);
             }
          }
          releaseIfDrained(fd);

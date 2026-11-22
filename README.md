@@ -248,15 +248,12 @@ python2 tests/project3/mid_review.py
 ```
 
 The test starts a listener on node 3, connects from node 1 over
-`topo/p3_midreview.topo`, transfers the byte pattern `0..31` using
-stop-and-wait, then performs an orderly close. It checks connection-state
-transitions, byte verification, and cleanup. Detailed output is saved to
-`logs/project3-mid-review.log`.
+`topo/p3_midreview.topo`, transfers the byte pattern `0..31` with a fixed
+four-segment sender window, then performs an orderly close. It checks that
+multiple data segments are outstanding, verifies the bytes, and checks cleanup.
+Detailed output is saved to `logs/project3-mid-review.log`.
 
-Project 3 uses the existing 28-byte network packet: an 8-byte network header
-and 20-byte payload. Its 9-byte transport header leaves 11 data bytes per
-segment; it does not increase the MTU. The current implementation is the
-mid-review slice only. Sliding-window transfer, receiver flow control,
-concurrent-connection tests, and deterministic loss validation remain future
-work. See `PROJECT3_DESIGN.md` for the staged implementation and final test
-matrix.
+Project 3 uses the 29-byte course packet budget: an 8-byte network header and
+21-byte payload. Its 9-byte transport header leaves 12 data bytes per segment.
+The sender window is 48 bytes and is limited by the peer's advertised receive
+window. See `PROJECT3_DESIGN.md` for remaining validation work.
