@@ -546,6 +546,21 @@ implementation {
       return amount;
    }
 
+   command uint16_t Transport.sendAcknowledged(socket_t fd) {
+      if (!validSocket(fd)) return 0;
+      return sockets[fd].sendAcked;
+   }
+
+   command error_t Transport.endpoints(socket_t fd, socket_addr_t *local,
+                                       socket_addr_t *remote) {
+      if (!validSocket(fd) || local == NULL || remote == NULL) return FAIL;
+      local->addr = sockets[fd].localAddr;
+      local->port = sockets[fd].localPort;
+      remote->addr = sockets[fd].remoteAddr;
+      remote->port = sockets[fd].remotePort;
+      return SUCCESS;
+   }
+
    command error_t Transport.close(socket_t fd) {
       if (!validSocket(fd)) return FAIL;
       if (sockets[fd].state == LISTEN) {

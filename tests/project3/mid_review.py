@@ -52,9 +52,9 @@ def main():
         "send code 4",
         "window reopened after probe",
         "pattern valid",
-        "total 256",
+        "consumed 256",
         "TCP client close requested",
-        "TCP client connection closed",
+        "TCP client close succeeded",
         "TCP server connection closed after 256 bytes"
     )
     missing = [marker for marker in expected if marker not in log]

@@ -15,6 +15,8 @@ class TestSim:
     CMD_TEST_CLIENT = 4
     CMD_TEST_SERVER = 5
     CMD_CLIENT_CLOSE = 10
+    CMD_TEST_CONSUMER_PAUSE = 11
+    CMD_TEST_CONSUMER_RESUME = 12
 
     COMMAND_CHANNEL = "command"
     GENERAL_CHANNEL = "general"
@@ -157,6 +159,23 @@ class TestSim:
                    chr(sourcePort) + chr(destinationPort))
         self.sendCMD(self.CMD_CLIENT_CLOSE, clientAddress, payload)
 
+    # The server command target owns the consumer for this full connection tuple.
+    def pauseTestConsumer(self, serverAddress, listenPort, clientAddress,
+                          sourcePort):
+        if not 1 <= listenPort <= 255 or not 1 <= sourcePort <= 255:
+            raise ValueError('TCP ports must be between 1 and 255')
+        payload = (self._encode16(serverAddress) + chr(listenPort) +
+                   self._encode16(clientAddress) + chr(sourcePort))
+        self.sendCMD(self.CMD_TEST_CONSUMER_PAUSE, serverAddress, payload)
+
+    def resumeTestConsumer(self, serverAddress, listenPort, clientAddress,
+                           sourcePort):
+        if not 1 <= listenPort <= 255 or not 1 <= sourcePort <= 255:
+            raise ValueError('TCP ports must be between 1 and 255')
+        payload = (self._encode16(serverAddress) + chr(listenPort) +
+                   self._encode16(clientAddress) + chr(sourcePort))
+        self.sendCMD(self.CMD_TEST_CONSUMER_RESUME, serverAddress, payload)
+
     def _encode16(self, value):
         if not 0 <= value <= 65535:
             raise ValueError('TCP address/length must fit in 16 bits')
@@ -171,18 +190,15 @@ class TestSim:
     # The injected frame is processed as received by the source, so add one
     # to compensate for the source's normal forwarding decrement.
     def injectRoutedPing(self, source, destination, ttl, seq=500):
-        if ttl < 1 or ttl >= 255:
-            raise ValueError('TTL must be between 1 and 254')
-        message = pack()
-        message.set_dest(destination)
-        message.set_src(source)
-        message.set_seq(seq)
-        message.set_TTL(ttl + 1)
-        message.set_protocol(0)
-        message.set_payload([0] * 21)
+        if ttl < 1 or ttl > 14:
+            raise ValueError('TTL must be between 1 and 14')
+        # Build the compact 7-byte header directly; packet.py may be stale until MIG runs.
+        wire = (self._encode16(destination) + self._encode16(source) +
+                self._encode16(seq) + chr(((ttl + 1) << 4) | 0) +
+                ('\x00' * 22))
         packet = self.t.newPacket()
-        packet.setType(message.get_amType())
-        packet.setData(message.data)
+        packet.setType(pack.get_amType())
+        packet.setData(wire)
         packet.setDestination(source)
         packet.deliver(source, self.t.time() + 5)
 

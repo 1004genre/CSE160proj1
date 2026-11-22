@@ -87,6 +87,14 @@ implementation {
                                              uint16_t serverAddress,
                                              uint8_t sourcePort,
                                              uint8_t destinationPort) {}
+   event void CommandHandler.pauseTestConsumer(uint16_t serverAddress,
+                                               uint8_t listenPort,
+                                               uint16_t clientAddress,
+                                               uint8_t sourcePort) {}
+   event void CommandHandler.resumeTestConsumer(uint16_t serverAddress,
+                                                uint8_t listenPort,
+                                                uint16_t clientAddress,
+                                                uint8_t sourcePort) {}
    event void CommandHandler.setAppServer() {}
    event void CommandHandler.setAppClient() {}
 

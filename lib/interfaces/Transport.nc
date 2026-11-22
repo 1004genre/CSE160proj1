@@ -77,6 +77,13 @@ interface Transport{
     */
    command uint16_t write(socket_t fd, uint8_t *buff, uint16_t bufflen);
 
+   // Return cumulative application data bytes acknowledged on this connection.
+   command uint16_t sendAcknowledged(socket_t fd);
+
+   // Copy the connection's local/remote addresses and ports for app-side matching.
+   command error_t endpoints(socket_t fd, socket_addr_t *local,
+                             socket_addr_t *remote);
+
    /**
     * This will pass the packet so you can handle it internally. 
     * @param

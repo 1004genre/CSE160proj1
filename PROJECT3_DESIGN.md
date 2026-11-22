@@ -127,6 +127,14 @@ handler only notifies, while a 500 ms timer resumes reads through
 then checks that a later probe recovers the window and logged receive occupancy
 never exceeds 128 bytes.
 
+The command wrapper in `run.py` targets server creation and receiver pause/resume
+at the server address, and client open/close at the client address. Pause and
+resume identify `(serverAddress, listenPort, clientAddress, sourcePort)`. Each
+accepted socket has its own test record; a shared 500 ms timer reads each
+unpaused connection in bounded 128-byte chunks. The producer regenerates bytes
+from its accepted-byte offset, while transport state separately counts
+acknowledged bytes; the receiver counts consumed bytes and byte mismatches.
+
 Transport timer work scans a fixed table of at most ten sockets. Each retry is
 limited to the current 56-byte sender window (at most four 14-byte segments),
 and each routing event forwards one packet. Missing routes or a full network

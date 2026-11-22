@@ -103,6 +103,21 @@ implementation{
                     buff[4], buff[5]);
                 break;
 
+            case CMD_TEST_CONSUMER_PAUSE:
+                dbg(COMMAND_CHANNEL, "Command Type: TCP test consumer pause\n");
+                // Payload order: server address/port, then client address/port.
+                signal CommandHandler.pauseTestConsumer(
+                    readNetwork16(buff), buff[2],
+                    readNetwork16(&buff[3]), buff[5]);
+                break;
+
+            case CMD_TEST_CONSUMER_RESUME:
+                dbg(COMMAND_CHANNEL, "Command Type: TCP test consumer resume\n");
+                signal CommandHandler.resumeTestConsumer(
+                    readNetwork16(buff), buff[2],
+                    readNetwork16(&buff[3]), buff[5]);
+                break;
+
             default:
                 dbg(COMMAND_CHANNEL, "CMD_ERROR: \"%d\" does not match any known commands.\n", msg->id);
                 break;

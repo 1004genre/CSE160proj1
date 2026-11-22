@@ -256,6 +256,24 @@ closes, drops one reopening update, and verifies probe recovery without buffer
 overflow. It also verifies the bytes and cleanup.
 Detailed output is saved to `logs/project3-mid-review.log`.
 
+`python2 run.py` runs the 300-byte Project 3 example. Its `Project3Run` wrapper
+also exposes `cmdTestServer(serverAddress, listenPort)`,
+`cmdTestClient(clientAddress, serverAddress, srcPort, destPort, transferBytes)`,
+`cmdClientClose(clientAddress, serverAddress, srcPort, destPort)`,
+`cmdTestConsumerPause(serverAddress, listenPort, clientAddress, sourcePort)`,
+and the matching `cmdTestConsumerResume`. Server commands target the server;
+client open/close commands target the client. Pause/resume identify the server
+and client endpoints and are delivered to the server. The wrapper maps these
+names to the starter `TestSim.testServer`, `testClient`, and `closeTestClient`
+helpers, then the dispatcher signals `setTestServer`, `setTestClient`, and
+`closeTestClient` in `CommandHandler`. The receiver keeps a separate
+timer-driven consumer record per accepted connection and reports consumed
+totals and byte mismatches on close.
+The producer uses only a bounded 128-byte scratch buffer, advances its offset
+by locally accepted bytes, and regenerates byte `k` as `k % 256`; a 300-byte run
+therefore repeats 0 through 43 after 0 through 255. Accepted, acknowledged,
+and receiver-consumed counts are tracked separately.
+
 Project 3 uses the 29-byte course packet budget. The encoded course link-layer
 header contributes 0 bytes inside this payload: `SimpleSend.send` receives the
 next-hop address separately, and TinyOS AM framing is outside the 29-byte
