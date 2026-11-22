@@ -5,7 +5,6 @@ enum {
    DV_INFINITY = 16,
    DV_QUALITY_INFINITY = 255,
    DV_DESTINATIONS = 256,
-   DV_ENTRIES_PER_PACKET = 10,
    DV_EXPIRE_MS = 300000,
    DV_WITHDRAW_MS = 1200000,
    DV_STAGE_MS = 250
@@ -40,6 +39,10 @@ implementation {
 
    void invalidate(uint16_t dest, const char *reason);
    void sendNextPage();
+   uint8_t dvEntryCapacity();
+   bool encodeDVEntry(pack *adv, uint8_t index, uint8_t dest, uint8_t cost);
+   bool decodeDVEntry(pack *adv, uint8_t count, uint8_t index,
+                      uint8_t *dest, uint8_t *cost);
    uint8_t infinityCost();
    uint8_t linkCost(uint16_t neighbor);
    void updateNeighborRoutes();
@@ -161,7 +164,7 @@ implementation {
       if (sender >= DV_DESTINATIONS || !call Neighbors.isNeighbor(sender) ||
           adv->dest != TOS_NODE_ID) return msg;
       count = adv->payload[0];
-      if (count > DV_ENTRIES_PER_PACKET ||
+      if (count > dvEntryCapacity() ||
           (uint16_t)count * 2 + 1 > PACKET_MAX_PAYLOAD_SIZE) {
          dbg(ROUTING_CHANNEL, "Node %d discarded malformed DV from %d\n", TOS_NODE_ID, sender);
          return msg;
@@ -177,10 +180,13 @@ implementation {
          return msg;
       }
       for (i = 0; i < count; i++) {
-         uint16_t dest = adv->payload[1 + 2 * i];
-         uint8_t advertised = adv->payload[2 + 2 * i];
+         uint8_t destByte;
+         uint8_t advertised;
+         uint16_t dest;
          uint16_t candidate;
          bool selected;
+         if (!decodeDVEntry(adv, count, i, &destByte, &advertised)) return msg;
+         dest = destByte;
          if (dest >= DV_DESTINATIONS || dest == TOS_NODE_ID ||
              advertised > infinity) continue;
          selected = routes[dest].valid && routes[dest].next == sender;
@@ -224,6 +230,33 @@ implementation {
       dbg(ROUTING_CHANNEL, "Node %d route %d unreachable (%s)\n", TOS_NODE_ID, dest, reason);
    }
 
+   // Keep each destination-cost pair complete within one packet's bounded payload.
+   uint8_t dvEntryCapacity() {
+      return (PACKET_MAX_PAYLOAD_SIZE - 1) / 2;
+   }
+
+   bool encodeDVEntry(pack *adv, uint8_t index, uint8_t dest, uint8_t cost) {
+      uint8_t offset;
+      if (adv == NULL || index >= dvEntryCapacity()) return FALSE;
+      offset = 1 + 2 * index;
+      if (offset + 1 >= PACKET_MAX_PAYLOAD_SIZE) return FALSE;
+      adv->payload[offset] = dest;
+      adv->payload[offset + 1] = cost;
+      return TRUE;
+   }
+
+   bool decodeDVEntry(pack *adv, uint8_t count, uint8_t index,
+                      uint8_t *dest, uint8_t *cost) {
+      uint8_t offset;
+      if (adv == NULL || dest == NULL || cost == NULL ||
+          index >= count || count > dvEntryCapacity()) return FALSE;
+      offset = 1 + 2 * index;
+      if (offset + 1 >= PACKET_MAX_PAYLOAD_SIZE) return FALSE;
+      *dest = adv->payload[offset];
+      *cost = adv->payload[offset + 1];
+      return TRUE;
+   }
+
    // Serialize one bounded, recipient-specific distance vector page with poison reverse.
    void sendNextPage() {
       pack adv;
@@ -245,19 +278,20 @@ implementation {
       }
       adv.dest = neighbor;
       adv.src = TOS_NODE_ID;
-      adv.seq = (uint16_t)(destinationCursor / DV_ENTRIES_PER_PACKET);
+      adv.seq = (uint16_t)(destinationCursor / dvEntryCapacity());
       adv.ttlProtocol = (1 << 4) | PROTOCOL_DV;
       memset(adv.payload, 0, PACKET_MAX_PAYLOAD_SIZE);
       for (scanned = destinationCursor; scanned < DV_DESTINATIONS &&
-           count < DV_ENTRIES_PER_PACKET; scanned++) {
+           count < dvEntryCapacity(); scanned++) {
+         uint8_t advertised;
          if (!routes[scanned].known) continue;
-         adv.payload[1 + 2 * count] = (uint8_t)scanned;
          if (scanned == TOS_NODE_ID)
-            adv.payload[2 + 2 * count] = 0;
+            advertised = 0;
          else if (routes[scanned].valid && routes[scanned].next != neighbor)
-            adv.payload[2 + 2 * count] = routes[scanned].cost;
+            advertised = routes[scanned].cost;
          else
-            adv.payload[2 + 2 * count] = infinityCost();
+            advertised = infinityCost();
+         if (!encodeDVEntry(&adv, count, (uint8_t)scanned, advertised)) break;
          count++;
       }
       adv.payload[0] = count;
@@ -267,9 +301,14 @@ implementation {
              TOS_NODE_ID, neighbor);
          return;
       }
-      for (i = 0; i < count; i++)
-         dbg(ROUTING_CHANNEL, "Node %d advert to %d: dest %d cost %d\n",
-             TOS_NODE_ID, neighbor, adv.payload[1 + 2 * i], adv.payload[2 + 2 * i]);
+      for (i = 0; i < count; i++) {
+         uint8_t dest;
+         uint8_t cost;
+         if (decodeDVEntry(&adv, count, i, &dest, &cost)) {
+            dbg(ROUTING_CHANNEL, "Node %d advert to %d: dest %d cost %d\n",
+                TOS_NODE_ID, neighbor, dest, cost);
+         }
+      }
       destinationCursor = scanned;
       if (destinationCursor >= DV_DESTINATIONS) {
          neighborCursor++;

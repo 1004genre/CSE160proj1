@@ -14,12 +14,33 @@ module TransportP {
 implementation {
    socket_store_t sockets[MAX_NUM_OF_SOCKETS];
 
+   // Subtract the encoded transport header from the network payload budget.
+   uint8_t segmentDataCapacity() {
+      return PACKET_MAX_PAYLOAD_SIZE - TCP_HEADER_SIZE;
+   }
+
    uint8_t segmentDataLength(tcp_segment_t *segment) {
       if (segment->kindLength > TCP_CODE_DATA_BASE &&
-          segment->kindLength <= TCP_CODE_DATA_BASE + TCP_DATA_SIZE) {
+          segment->kindLength <= TCP_CODE_DATA_BASE + segmentDataCapacity()) {
          return segment->kindLength - TCP_CODE_DATA_BASE;
       }
       return 0;
+   }
+
+   // Decode only known controls or a positive data length within that capacity.
+   bool decodeSegment(tcp_segment_t *segment, uint8_t *dataLength) {
+      if (segment == NULL || dataLength == NULL) return FALSE;
+      *dataLength = segmentDataLength(segment);
+      switch (segment->kindLength) {
+         case TCP_CODE_SYN:
+         case TCP_CODE_ACK:
+         case TCP_CODE_SYN_ACK:
+         case TCP_CODE_FIN:
+         case TCP_CODE_PROBE:
+            return TRUE;
+         default:
+            return *dataLength > 0;
+      }
    }
 
    char *stateName(enum socket_state state) {
@@ -150,15 +171,16 @@ implementation {
       return SOCKET_BUFFER_SIZE - connection->rcvLength;
    }
 
-   error_t sendSegment(socket_t fd, uint8_t kind, uint16_t seq,
-                       uint16_t ack, const uint8_t *data, uint8_t length,
-                       bool track) {
+   // Encode one transport segment into the fixed-size network payload.
+   error_t encodeSegment(socket_t fd, uint8_t kind, uint16_t seq,
+                         uint16_t ack, const uint8_t *data, uint8_t length,
+                         uint8_t *payload) {
       tcp_segment_t segment;
-      uint8_t payload[PACKET_MAX_PAYLOAD_SIZE];
-      error_t result;
 
-      if (!validSocket(fd) || length > TCP_DATA_SIZE ||
-          (length > 0 && data == NULL)) return FAIL;
+      if (!validSocket(fd) || payload == NULL ||
+          length > segmentDataCapacity() || (length > 0 && data == NULL)) {
+         return FAIL;
+      }
       if ((kind == TCP_KIND_DATA && length == 0) ||
           (kind != TCP_KIND_DATA && length != 0)) return FAIL;
 
@@ -173,10 +195,23 @@ implementation {
       segment.window = receiveWindow(&sockets[fd]);
       if (length > 0) memcpy(segment.data, data, length);
 
-      memset(payload, 0, sizeof(payload));
+      memset(payload, 0, PACKET_MAX_PAYLOAD_SIZE);
       memcpy(payload, &segment, sizeof(segment));
+
+      return SUCCESS;
+   }
+
+   error_t sendSegment(socket_t fd, uint8_t kind, uint16_t seq,
+                       uint16_t ack, const uint8_t *data, uint8_t length,
+                       bool track) {
+      uint8_t payload[PACKET_MAX_PAYLOAD_SIZE];
+      tcp_segment_t *segment = (tcp_segment_t *)payload;
+      error_t result;
+
+      result = encodeSegment(fd, kind, seq, ack, data, length, payload);
+      if (result != SUCCESS) return result;
       if (track) {
-         memcpy(&sockets[fd].lastSegment, &segment, sizeof(segment));
+         memcpy(&sockets[fd].lastSegment, segment, sizeof(tcp_segment_t));
          sockets[fd].hasOutstanding = TRUE;
          sockets[fd].controlOutstanding = TRUE;
          sockets[fd].retries = 0;
@@ -191,21 +226,67 @@ implementation {
       return result;
    }
 
-   void sendDataRange(socket_t fd, uint16_t sequence, uint16_t offset,
-                      uint16_t length) {
-      uint8_t chunk;
-      if (!validSocket(fd) || sockets[fd].sendLength > SOCKET_BUFFER_SIZE ||
-          offset > sockets[fd].sendLength ||
-          length > sockets[fd].sendLength - offset) return;
-      while (length > 0) {
-         chunk = length > TCP_DATA_SIZE ? TCP_DATA_SIZE : length;
-         // Replaying a retained range does not advance sequence or app byte counts.
-         sendSegment(fd, TCP_KIND_DATA, sequence, 0,
-                     &sockets[fd].sendBuff[offset], chunk, FALSE);
-         sequence += chunk;
-         offset += chunk;
-         length -= chunk;
+   bool advanceSendCursor(socket_t fd, uint8_t length) {
+      uint16_t outstanding;
+      if (!validSocket(fd) || length == 0 ||
+          length > segmentDataCapacity() ||
+          sockets[fd].sendNext < sockets[fd].sendUna ||
+          sockets[fd].sendLength > SOCKET_BUFFER_SIZE) return FALSE;
+      outstanding = sockets[fd].sendNext - sockets[fd].sendUna;
+      if (outstanding > sockets[fd].sendLength ||
+          length > sockets[fd].sendLength - outstanding) return FALSE;
+      if (!sockets[fd].hasOutstanding) {
+         sockets[fd].hasOutstanding = TRUE;
+         sockets[fd].controlOutstanding = FALSE;
+         sockets[fd].retries = 0;
+         sockets[fd].elapsedSeconds = 0;
       }
+      // Advance only after the send service accepted this encoded packet.
+      sockets[fd].sendNext += length;
+      return TRUE;
+   }
+
+   void sendDataBatch(socket_t fd) {
+      uint8_t sent = 0;
+      uint8_t length;
+      uint16_t outstanding;
+      uint16_t window;
+      uint16_t allowedEnd;
+
+      if (!validSocket(fd) || sockets[fd].controlOutstanding ||
+          sockets[fd].sendNext < sockets[fd].sendUna) return;
+      outstanding = sockets[fd].sendNext - sockets[fd].sendUna;
+      window = sockets[fd].senderWindow < sockets[fd].peerWindow ?
+               sockets[fd].senderWindow : sockets[fd].peerWindow;
+      allowedEnd = sockets[fd].sendUna +
+                   (outstanding < window ? outstanding : window);
+      if (sockets[fd].retransmitCursor < sockets[fd].sendUna) {
+         sockets[fd].retransmitCursor = sockets[fd].sendUna;
+      }
+      if (sockets[fd].retransmitEnd > allowedEnd) {
+         sockets[fd].retransmitEnd = allowedEnd;
+      }
+
+      // Retries retain the same byte range and submit no more than two packets per batch.
+      while (sockets[fd].retransmitCursor < sockets[fd].retransmitEnd &&
+             sent < TCP_DATA_BATCH_SEGMENTS) {
+         uint16_t offset = sockets[fd].retransmitCursor - sockets[fd].sendUna;
+         uint16_t remaining = sockets[fd].retransmitEnd -
+                              sockets[fd].retransmitCursor;
+         if (offset > sockets[fd].sendLength ||
+             remaining > sockets[fd].sendLength - offset) break;
+         length = remaining > segmentDataCapacity() ?
+                  segmentDataCapacity() : remaining;
+         // Re-encode the retained bytes with their original transport sequence range.
+         if (sendSegment(fd, TCP_KIND_DATA, sockets[fd].retransmitCursor, 0,
+                         &sockets[fd].sendBuff[offset], length, FALSE) != SUCCESS) {
+            break;
+         }
+         sockets[fd].retransmitCursor += length;
+         sent++;
+      }
+      sockets[fd].retransmitPending =
+         sockets[fd].retransmitCursor < sockets[fd].retransmitEnd;
    }
 
    void resendOutstanding(socket_t fd) {
@@ -224,8 +305,10 @@ implementation {
          window = sockets[fd].senderWindow < sockets[fd].peerWindow ?
                   sockets[fd].senderWindow : sockets[fd].peerWindow;
          retransmitLength = outstanding < window ? outstanding : window;
-         sendDataRange(fd, sockets[fd].sendUna, 0,
-                       retransmitLength);
+         sockets[fd].retransmitCursor = sockets[fd].sendUna;
+         sockets[fd].retransmitEnd = sockets[fd].sendUna + retransmitLength;
+         sockets[fd].retransmitPending = retransmitLength > 0;
+         sendDataBatch(fd);
       }
       dbg(TRANSPORT_CHANNEL, "Node %d TCP fd %d retransmit #%d\n",
           TOS_NODE_ID, fd, sockets[fd].retries);
@@ -254,9 +337,11 @@ implementation {
       uint16_t window;
       uint16_t allowance;
       uint8_t length;
+      uint8_t sent = 0;
+      error_t result;
 
       if (!validSocket(fd) || sockets[fd].state != ESTABLISHED ||
-          sockets[fd].controlOutstanding) return;
+          sockets[fd].controlOutstanding || sockets[fd].retransmitPending) return;
 
       // The buffer prefix is in flight; only its suffix is eligible for sending.
       if (sockets[fd].sendLength > SOCKET_BUFFER_SIZE ||
@@ -267,28 +352,30 @@ implementation {
                sockets[fd].senderWindow : sockets[fd].peerWindow;
       unsent = sockets[fd].sendLength > outstanding ?
                sockets[fd].sendLength - outstanding : 0;
-      while (unsent > 0 && outstanding < window) {
+      while (unsent > 0 && outstanding < window &&
+             sent < TCP_DATA_BATCH_SEGMENTS) {
          allowance = window - outstanding;
-         length = unsent > TCP_DATA_SIZE ? TCP_DATA_SIZE : unsent;
+         length = unsent > segmentDataCapacity() ?
+                  segmentDataCapacity() : unsent;
          if (length > allowance) length = allowance;
          if (outstanding >= SOCKET_BUFFER_SIZE || length == 0) return;
-         if (!sockets[fd].hasOutstanding) {
-            sockets[fd].hasOutstanding = TRUE;
-            sockets[fd].controlOutstanding = FALSE;
-            sockets[fd].retries = 0;
-            sockets[fd].elapsedSeconds = 0;
+         result = sendSegment(fd, TCP_KIND_DATA, sockets[fd].sendNext, 0,
+                              &sockets[fd].sendBuff[outstanding], length, FALSE);
+         if (result != SUCCESS) {
+            sockets[fd].sendPending = TRUE;
+            return;
          }
-         // Fill the fixed sender window with separate data and ACK segments.
-         sendSegment(fd, TCP_KIND_DATA, sockets[fd].sendNext, 0,
-                     &sockets[fd].sendBuff[outstanding], length, FALSE);
-         sockets[fd].sendNext += length;
+         if (!advanceSendCursor(fd, length)) return;
          outstanding += length;
          unsent -= length;
+         sent++;
          dbg(TRANSPORT_CHANNEL,
              "Node %d TCP fd %d window DATA seq %d len %d outstanding %d/%d\n",
              TOS_NODE_ID, fd, sockets[fd].sendNext - length, length,
              outstanding, window);
       }
+      // A later ACK or retry timer resumes data beyond this two-packet batch.
+      sockets[fd].sendPending = unsent > 0 && outstanding < window;
 
       if (sockets[fd].closeRequested && sockets[fd].sendLength == 0 &&
           !sockets[fd].hasOutstanding) {
@@ -366,6 +453,14 @@ implementation {
          sockets[fd].sendLength -= newlyAcked;
          sockets[fd].sendAcked += newlyAcked;
          sockets[fd].sendUna = segment->ack;
+         if (sockets[fd].retransmitPending) {
+            if (sockets[fd].retransmitCursor < sockets[fd].sendUna)
+               sockets[fd].retransmitCursor = sockets[fd].sendUna;
+            if (sockets[fd].retransmitEnd < sockets[fd].sendUna)
+               sockets[fd].retransmitEnd = sockets[fd].sendUna;
+            if (sockets[fd].retransmitCursor >= sockets[fd].retransmitEnd)
+               sockets[fd].retransmitPending = FALSE;
+         }
          sockets[fd].elapsedSeconds = 0;
          sockets[fd].retries = 0;
          if (sockets[fd].sendUna == sockets[fd].sendNext) {
@@ -583,20 +678,13 @@ implementation {
       tcp_segment_t *segment;
       socket_t fd;
       socket_t listener;
-      bool controlOnly;
       uint8_t dataLength;
 
       if (package == NULL || PACK_PROTOCOL(package) != PROTOCOL_TCP) return FAIL;
       segment = (tcp_segment_t *)package->payload;
-      dataLength = segmentDataLength(segment);
-      controlOnly = segment->kindLength == TCP_CODE_SYN ||
-                    segment->kindLength == TCP_CODE_ACK ||
-                    segment->kindLength == TCP_CODE_SYN_ACK ||
-                    segment->kindLength == TCP_CODE_FIN ||
-                    segment->kindLength == TCP_CODE_PROBE;
       // Accept only handshake, pure ACK, FIN, probe, or data-only wire forms.
       if (segment->window > SOCKET_BUFFER_SIZE ||
-          (!controlOnly && dataLength == 0)) {
+          !decodeSegment(segment, &dataLength)) {
          dbg(TRANSPORT_CHANNEL, "Node %d TCP dropped malformed segment\n",
              TOS_NODE_ID);
          return FAIL;
@@ -794,7 +882,19 @@ implementation {
       socket_t fd;
       // The fixed socket table bounds this callback; each data retry is window-limited.
       for (fd = 0; fd < MAX_NUM_OF_SOCKETS; fd++) {
+         bool dataBatchUsed = FALSE;
          if (!sockets[fd].allocated) continue;
+
+         // Resume one bounded data batch per connection on each timer event.
+         if (sockets[fd].retransmitPending) {
+            sendDataBatch(fd);
+            dataBatchUsed = TRUE;
+         } else if (sockets[fd].state == ESTABLISHED &&
+                    sockets[fd].sendPending &&
+                    sockets[fd].peerWindow > 0) {
+            pumpData(fd);
+            dataBatchUsed = TRUE;
+         }
 
          if (sockets[fd].state == TIME_WAIT &&
              !sockets[fd].timeWaitExpired) {
@@ -826,7 +926,10 @@ implementation {
          } else if (sockets[fd].hasOutstanding) {
             sockets[fd].elapsedSeconds++;
             if (sockets[fd].elapsedSeconds >= TCP_RTO_SECONDS) {
-               if (sockets[fd].retries >= TCP_MAX_RETRIES) {
+               if (dataBatchUsed) {
+                  // Preserve the two-packet timer budget; retry next timer tick.
+                  sockets[fd].elapsedSeconds = TCP_RTO_SECONDS - 1;
+               } else if (sockets[fd].retries >= TCP_MAX_RETRIES) {
                   dbg(TRANSPORT_CHANNEL,
                       "Node %d TCP fd %d retry limit exhausted\n",
                       TOS_NODE_ID, fd);

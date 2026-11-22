@@ -25,6 +25,8 @@ enum {
    TCP_TIME_WAIT_SECONDS = TCP_RTO_SECONDS * (TCP_MAX_RETRIES + 1),
    // Four maximum-sized segments may be outstanding when the peer window permits.
    TCP_SENDER_WINDOW_SIZE = TCP_DATA_SIZE * 4,
+   // A send event submits at most two data packets; remaining work resumes later.
+   TCP_DATA_BATCH_SEGMENTS = 2,
    TCP_FAILURE_RETRY_LIMIT = 1,
    TCP_TIMER_INTERVAL_MS = 1000
 };

@@ -109,6 +109,15 @@ the same transport sequence range, and allocates a fresh network packet ID for
 each routed transmission. `Transport.write` reports locally accepted bytes;
 the application retries any unaccepted suffix after `sendReady` reports space.
 
+Transport encoding/decoding and data-capacity checks use the encoded segment
+size. Each pump or retransmit call submits at most two data packets through the
+existing queued `SimpleSend` service. A lower-layer queue failure leaves the
+send cursor unchanged; a later ACK or retry-timer event resumes the batch.
+Only transport ACKs release retained bytes. The DV layer separately encodes
+whole destination-cost pairs, sends one bounded page per timer event, and
+advances its table cursor only after the send queue accepts that page; neighbors
+process each page independently without table reassembly.
+
 The advertised receive window is `128 - rcvLength`; acknowledged bytes remain
 counted until `Transport.read` consumes them. The sender limits outstanding
 bytes to the smaller of its 56-byte fixed window and the peer window relative

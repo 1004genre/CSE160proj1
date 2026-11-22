@@ -68,6 +68,10 @@ typedef struct socket_store_t{
     tcp_segment_t handshakeReply;
     bool hasOutstanding;
     bool controlOutstanding;
+    bool sendPending; // App-accepted data awaits a later bounded send batch.
+    bool retransmitPending;
+    uint16_t retransmitCursor;
+    uint16_t retransmitEnd;
     bool persistProbing; // A queued sender waits for a response while peer window is zero.
     bool closeRequested;
     bool peerFinReceived;

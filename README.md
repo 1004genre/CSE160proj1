@@ -278,6 +278,10 @@ addition to byte mismatches; a repeating pattern alone could miss a whole
 256-byte block loss or duplication. `Transport.read` returns any available
 in-order prefix, so segment boundaries do not define application messages;
 Project 4 text readers will need delimiters or explicit lengths.
+Transport packetization derives capacity from the encoded header, submits at
+most two data segments per batch through `SimpleSend`, and advances its send
+cursor only when that queue accepts a packet. The DV sender separately queues
+complete destination-cost pairs in one timer-driven page at a time.
 
 Project 3 uses the 29-byte course packet budget. The encoded course link-layer
 header contributes 0 bytes inside this payload: `SimpleSend.send` receives the
