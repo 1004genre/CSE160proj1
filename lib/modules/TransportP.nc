@@ -186,8 +186,8 @@ implementation {
          dbg(TRANSPORT_CHANNEL,
              "Node %d sends FIN\n", TOS_NODE_ID);
       }
-      sendSegment(fd, TCP_FLAG_FIN | TCP_FLAG_ACK, seq,
-                  sockets[fd].rcvNext, NULL, 0, TRUE);
+      // FIN consumes one sequence number; its ACK is sent separately.
+      sendSegment(fd, TCP_FLAG_FIN, seq, 0, NULL, 0, TRUE);
    }
 
    void pumpData(socket_t fd) {
@@ -200,8 +200,9 @@ implementation {
       if (sockets[fd].sendAcked < sockets[fd].sendLength) {
          remaining = sockets[fd].sendLength - sockets[fd].sendAcked;
          length = remaining > TCP_DATA_SIZE ? TCP_DATA_SIZE : remaining;
-         sendSegment(fd, TCP_FLAG_DATA | TCP_FLAG_ACK,
-                     sockets[fd].sendNext, sockets[fd].rcvNext,
+         // Data uses its own sequence space; its acknowledgment is a separate segment.
+         sendSegment(fd, TCP_FLAG_DATA,
+                     sockets[fd].sendNext, 0,
                      &sockets[fd].sendBuff[sockets[fd].sendAcked],
                      length, TRUE);
          sockets[fd].sendNext += length;
@@ -345,9 +346,9 @@ implementation {
       sockets[fd].remoteAddr = addr->addr;
       sockets[fd].remotePort = addr->port;
       sockets[fd].sendUna = 0;
-      sockets[fd].sendNext = 1;
+      sockets[fd].sendNext = TCP_INITIAL_SEQUENCE + 1;
       setState(fd, SYN_SENT);
-      sendSegment(fd, TCP_FLAG_SYN, 0, 0, NULL, 0, TRUE);
+      sendSegment(fd, TCP_FLAG_SYN, TCP_INITIAL_SEQUENCE, 0, NULL, 0, TRUE);
       return SUCCESS;
    }
 
@@ -409,12 +410,20 @@ implementation {
       tcp_segment_t *segment;
       socket_t fd;
       socket_t listener;
+      bool controlOnly;
 
       if (package == NULL || package->protocol != PROTOCOL_TCP) return FAIL;
       segment = (tcp_segment_t *)package->payload;
-      if (segment->dataLength > TCP_DATA_SIZE ||
-          (segment->dataLength > 0 &&
-           !(segment->flags & TCP_FLAG_DATA))) {
+      controlOnly = segment->flags == TCP_FLAG_SYN ||
+                    segment->flags == TCP_FLAG_ACK ||
+                    segment->flags == (TCP_FLAG_SYN | TCP_FLAG_ACK) ||
+                    segment->flags == TCP_FLAG_FIN;
+      // Accept only the handshake, pure ACK, FIN, or data-only wire forms.
+      if ((!controlOnly && segment->flags != TCP_FLAG_DATA) ||
+          (controlOnly && segment->dataLength != 0) ||
+          (segment->flags == TCP_FLAG_DATA &&
+           (segment->dataLength == 0 ||
+            segment->dataLength > TCP_DATA_SIZE))) {
          dbg(TRANSPORT_CHANNEL, "Node %d TCP dropped malformed segment\n",
              TOS_NODE_ID);
          return FAIL;
@@ -449,12 +458,12 @@ implementation {
          sockets[fd].localPort = segment->destPort;
          sockets[fd].remoteAddr = package->src;
          sockets[fd].remotePort = segment->srcPort;
-         sockets[fd].sendNext = 1;
+         sockets[fd].sendNext = TCP_INITIAL_SEQUENCE + 1;
          sockets[fd].sendUna = 0;
          sockets[fd].rcvNext = segment->seq + 1;
          sockets[listener].pendingChild = fd;
          setState(fd, SYN_RCVD);
-         sendSegment(fd, TCP_FLAG_SYN | TCP_FLAG_ACK, 0,
+         sendSegment(fd, TCP_FLAG_SYN | TCP_FLAG_ACK, TCP_INITIAL_SEQUENCE,
                      sockets[fd].rcvNext, NULL, 0, TRUE);
          return SUCCESS;
       }
