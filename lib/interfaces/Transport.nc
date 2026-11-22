@@ -108,6 +108,7 @@ interface Transport{
     * @Side For your project, only server side. This could be both though.
     * @return uint16_t - return the amount of data you are able to read
     *    from the pass buffer. This may be shorter then bufflen
+    * Reads return any available in-order prefix; segment boundaries are not messages.
     */
    command uint16_t read(socket_t fd, uint8_t *buff, uint16_t bufflen);
 

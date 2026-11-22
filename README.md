@@ -272,7 +272,12 @@ totals and byte mismatches on close.
 The producer uses only a bounded 128-byte scratch buffer, advances its offset
 by locally accepted bytes, and regenerates byte `k` as `k % 256`; a 300-byte run
 therefore repeats 0 through 43 after 0 through 255. Accepted, acknowledged,
-and receiver-consumed counts are tracked separately.
+and receiver-consumed counts are tracked separately. The harness stores each
+expected transfer length and checks exact consumed and acknowledged totals in
+addition to byte mismatches; a repeating pattern alone could miss a whole
+256-byte block loss or duplication. `Transport.read` returns any available
+in-order prefix, so segment boundaries do not define application messages;
+Project 4 text readers will need delimiters or explicit lengths.
 
 Project 3 uses the 29-byte course packet budget. The encoded course link-layer
 header contributes 0 bytes inside this payload: `SimpleSend.send` receives the

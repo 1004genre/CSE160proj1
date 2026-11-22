@@ -470,13 +470,16 @@ implementation {
       if (record == NULL) return;
       if (!record->isClient) {
          dbg(TRANSPORT_CHANNEL,
-             "Node %d TCP server connection closed after %d bytes; mismatches %d\n",
-             TOS_NODE_ID, record->consumedBytes, record->mismatches);
+             "Node %d TCP server connection %d:%d -> %d:%d closed after %d bytes; mismatches %d\n",
+             TOS_NODE_ID, record->remoteAddress, record->remotePort,
+             record->localAddress, record->localPort,
+             record->consumedBytes, record->mismatches);
       } else {
          record->acknowledgedBytes = call Transport.sendAcknowledged(fd);
          dbg(TRANSPORT_CHANNEL,
-             "Node %d TCP client close %s: accepted %d acknowledged %d of %d\n",
-             TOS_NODE_ID,
+             "Node %d TCP client %d:%d -> %d:%d close %s: accepted %d acknowledged %d of %d\n",
+             TOS_NODE_ID, record->localAddress, record->localPort,
+             record->remoteAddress, record->remotePort,
              record->acceptedBytes == record->requestedBytes &&
              record->acknowledgedBytes == record->requestedBytes ?
                 "succeeded" : "failed",

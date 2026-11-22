@@ -134,6 +134,11 @@ accepted socket has its own test record; a shared 500 ms timer reads each
 unpaused connection in bounded 128-byte chunks. The producer regenerates bytes
 from its accepted-byte offset, while transport state separately counts
 acknowledged bytes; the receiver counts consumed bytes and byte mismatches.
+The expected transfer length remains in `run.py` or the test script, not in
+transport state. Verification requires exact accepted, acknowledged, and
+consumed lengths as well as zero mismatches. A read returns any available
+in-order prefix; segment boundaries are not application message boundaries,
+so Project 4 text messages need delimiters or explicit lengths.
 
 Transport timer work scans a fixed table of at most ten sockets. Each retry is
 limited to the current 56-byte sender window (at most four 14-byte segments),

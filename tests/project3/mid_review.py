@@ -9,6 +9,7 @@ from TestSim import TestSim
 
 
 def main():
+    expected_bytes = 256  # Exact length catches a whole repeated-pattern block loss.
     log_dir = os.path.join(ROOT, "logs")
     if not os.path.isdir(log_dir):
         os.makedirs(log_dir)
@@ -27,7 +28,7 @@ def main():
         sim.testServer(3, 80)
         sim.runForSeconds(1)
         # Exceed the 128-byte local buffer to exercise partial writes and resumption.
-        sim.testClient(1, 3, 81, 80, 256)
+        sim.testClient(1, 3, 81, 80, expected_bytes)
         sim.runForSeconds(5)
         sim.closeTestClient(1, 3, 81, 80)
         # Allow the consumer pause, transfer completion, and 18-second TIME_WAIT.
@@ -54,8 +55,6 @@ def main():
         "pattern valid",
         "consumed 256",
         "TCP client close requested",
-        "TCP client close succeeded",
-        "TCP server connection closed after 256 bytes"
     )
     missing = [marker for marker in expected if marker not in log]
     if missing:
@@ -68,6 +67,25 @@ def main():
     if not occupancies or max(occupancies) > 128:
         raise RuntimeError(
             "Project 3 receive buffer bound failed. See {0}".format(log_path))
+
+    server_summary = re.search(
+        r"TCP server connection 1:81 -> 3:80 closed after (\d+) bytes; mismatches (\d+)",
+        log)
+    client_summary = re.search(
+        r"TCP client 1:81 -> 3:80 close succeeded: accepted (\d+) acknowledged (\d+) of (\d+)",
+        log)
+    if (server_summary is None or
+            int(server_summary.group(1)) != expected_bytes or
+            int(server_summary.group(2)) != 0):
+        raise RuntimeError(
+            "Expected exactly {0} consumed bytes and zero mismatches. See {1}".format(
+                expected_bytes, log_path))
+    if (client_summary is None or
+            [int(value) for value in client_summary.groups()] !=
+            [expected_bytes, expected_bytes, expected_bytes]):
+        raise RuntimeError(
+            "Client accepted and acknowledged counts did not match {0}. See {1}".format(
+                expected_bytes, log_path))
 
     print ""
     print "Connection setup:"
