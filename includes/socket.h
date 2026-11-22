@@ -68,6 +68,7 @@ typedef struct socket_store_t{
     tcp_segment_t handshakeReply;
     bool hasOutstanding;
     bool controlOutstanding;
+    bool persistProbing; // A queued sender waits for a response while peer window is zero.
     bool closeRequested;
     bool peerFinReceived;
     bool localFinAcknowledged;

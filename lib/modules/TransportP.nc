@@ -198,15 +198,22 @@ implementation {
 
    void resendOutstanding(socket_t fd) {
       uint8_t payload[PACKET_MAX_PAYLOAD_SIZE];
+      uint16_t outstanding;
+      uint16_t retransmitLength;
+      uint16_t window;
       if (sockets[fd].controlOutstanding) {
          memset(payload, 0, sizeof(payload));
          memcpy(payload, &sockets[fd].lastSegment,
                 sizeof(tcp_segment_t));
          call Network.send(sockets[fd].remoteAddr, payload);
       } else {
-         // Receiver discards gaps; Go-back-N replays all retained bytes in order.
+         // Go-back-N starts at the oldest byte and stays inside the current peer window.
+         outstanding = sockets[fd].sendNext - sockets[fd].sendUna;
+         window = sockets[fd].senderWindow < sockets[fd].peerWindow ?
+                  sockets[fd].senderWindow : sockets[fd].peerWindow;
+         retransmitLength = outstanding < window ? outstanding : window;
          sendDataRange(fd, sockets[fd].sendUna, 0,
-                       sockets[fd].sendNext - sockets[fd].sendUna);
+                       retransmitLength);
       }
       dbg(TRANSPORT_CHANNEL, "Node %d TCP fd %d retransmit #%d\n",
           TOS_NODE_ID, fd, sockets[fd].retries);
@@ -300,6 +307,12 @@ implementation {
           segment->ack > highestSent) return;
 
       sockets[fd].peerWindow = segment->window;
+      if (sockets[fd].persistProbing) {
+         // Any in-range ACK proves the peer is alive; zero window alone is not failure.
+         sockets[fd].persistProbing = FALSE;
+         sockets[fd].retries = 0;
+         sockets[fd].elapsedSeconds = 0;
+      }
       if (sockets[fd].controlOutstanding) {
          if ((sockets[fd].lastSegment.flags & TCP_FLAG_FIN) &&
              segment->ack == sockets[fd].lastSegment.seq + 1) {
@@ -538,8 +551,9 @@ implementation {
       controlOnly = segment->flags == TCP_FLAG_SYN ||
                     segment->flags == TCP_FLAG_ACK ||
                     segment->flags == (TCP_FLAG_SYN | TCP_FLAG_ACK) ||
-                    segment->flags == TCP_FLAG_FIN;
-      // Accept only the handshake, pure ACK, FIN, or data-only wire forms.
+                    segment->flags == TCP_FLAG_FIN ||
+                    segment->flags == TCP_FLAG_PROBE;
+      // Accept only handshake, pure ACK, FIN, probe, or data-only wire forms.
       if (segment->window > SOCKET_BUFFER_SIZE ||
           (!controlOnly && segment->flags != TCP_FLAG_DATA) ||
           (controlOnly && segment->dataLength != 0) ||
@@ -676,6 +690,19 @@ implementation {
          return SUCCESS;
       }
 
+      if (segment->flags == TCP_FLAG_PROBE) {
+         if (sockets[fd].state == ESTABLISHED ||
+             sockets[fd].state == FIN_WAIT_1 ||
+             sockets[fd].state == FIN_WAIT_2 ||
+             sockets[fd].state == LAST_ACK ||
+             sockets[fd].state == TIME_WAIT) {
+            sockets[fd].peerWindow = segment->window;
+            sendAck(fd); // A probe requests a window update, not application data.
+            pumpData(fd);
+         }
+         return SUCCESS;
+      }
+
       processAck(fd, segment);
       if (!validSocket(fd)) return SUCCESS;
 
@@ -743,7 +770,27 @@ implementation {
                sockets[fd].timeWaitExpired = TRUE;
             }
          }
-         if (sockets[fd].hasOutstanding) {
+         if (sockets[fd].state == ESTABLISHED &&
+             sockets[fd].sendLength > 0 &&
+             sockets[fd].peerWindow == 0) {
+            // A zero window pauses data retries; only unanswered window probes fail.
+            if (!sockets[fd].persistProbing) {
+               sockets[fd].persistProbing = TRUE;
+               sockets[fd].retries = 0;
+               sockets[fd].elapsedSeconds = 0;
+            }
+            sockets[fd].elapsedSeconds++;
+            if (sockets[fd].elapsedSeconds >= TCP_RTO_SECONDS) {
+               if (sockets[fd].retries >= TCP_MAX_RETRIES) {
+                  reportFailure(fd, TCP_FAILURE_RETRY_LIMIT);
+               } else {
+                  sockets[fd].retries++;
+                  sockets[fd].elapsedSeconds = 0;
+                  sendSegment(fd, TCP_FLAG_PROBE, sockets[fd].sendNext,
+                              sockets[fd].rcvNext, NULL, 0, FALSE);
+               }
+            }
+         } else if (sockets[fd].hasOutstanding) {
             sockets[fd].elapsedSeconds++;
             if (sockets[fd].elapsedSeconds >= TCP_RTO_SECONDS) {
                if (sockets[fd].retries >= TCP_MAX_RETRIES) {
@@ -758,15 +805,10 @@ implementation {
                   resendOutstanding(fd);
                }
             }
-         } else if (sockets[fd].state == ESTABLISHED &&
-                    sockets[fd].sendLength > 0 &&
-                    sockets[fd].peerWindow == 0) {
-            // A closed peer window also gets a bounded 18-second failure deadline.
-            sockets[fd].elapsedSeconds++;
-            if (sockets[fd].elapsedSeconds >=
-                TCP_RTO_SECONDS * (TCP_MAX_RETRIES + 1)) {
-               reportFailure(fd, TCP_FAILURE_RETRY_LIMIT);
-            }
+         } else if (sockets[fd].persistProbing) {
+            sockets[fd].persistProbing = FALSE;
+            sockets[fd].retries = 0;
+            sockets[fd].elapsedSeconds = 0;
          }
          releaseIfDrained(fd);
       }

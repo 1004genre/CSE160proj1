@@ -98,6 +98,18 @@ the same transport sequence range, and allocates a fresh network packet ID for
 each routed transmission. `Transport.write` reports locally accepted bytes;
 the application retries any unaccepted suffix after `sendReady` reports space.
 
+The advertised receive window is `128 - rcvLength`; acknowledged bytes remain
+counted until `Transport.read` consumes them. The sender limits outstanding
+bytes to the smaller of its 48-byte fixed window and the peer window relative
+to the cumulative ACK, so already outstanding bytes use part of that allowance.
+It sends a shorter segment when only a partial window remains. At zero window,
+it stops new data and sends a non-sequenced window probe every 3 seconds. A
+valid probe response with window zero keeps the connection alive; retry failure
+requires no valid response to five probes plus the final timeout interval.
+Go-Back-N retransmission begins at the oldest unacknowledged byte and limits
+each retry to the current fixed and advertised window; remaining bytes stay
+retained until later ACK/window progress allows them.
+
 ## Work plan
 
 | Stage | Work | Exit check |
