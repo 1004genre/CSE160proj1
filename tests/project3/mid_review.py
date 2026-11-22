@@ -28,7 +28,8 @@ def main():
         sim.testClient(1, 3, 81, 80, 32)
         sim.runForSeconds(5)
         sim.closeTestClient(1, 3, 81, 80)
-        sim.runForSeconds(15)
+        # TIME_WAIT lasts 18 seconds, covering the full FIN retry horizon.
+        sim.runForSeconds(25)
 
     with open(log_path, "r") as result_file:
         log = result_file.read()

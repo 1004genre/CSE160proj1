@@ -97,6 +97,17 @@ implementation {
       memset(&sockets[fd], 0, sizeof(socket_store_t));
    }
 
+   // Keep closing tuples until retry retention expires and unread bytes are consumed.
+   void releaseIfDrained(socket_t fd) {
+      if (!validSocket(fd) || sockets[fd].rcvLength != 0 ||
+          sockets[fd].hasOutstanding || !sockets[fd].localFinAcknowledged ||
+          sockets[fd].state != TIME_WAIT || !sockets[fd].timeWaitExpired) {
+         return;
+      }
+      signal Transport.connectionClosed(fd);
+      clearSocket(fd);
+   }
+
    socket_t findConnection(uint16_t remoteAddr, uint8_t remotePort,
                            uint16_t localAddr, uint8_t localPort) {
       socket_t fd;
@@ -245,13 +256,17 @@ implementation {
          if (segment->ack == expected) {
             sockets[fd].sendUna = segment->ack;
             sockets[fd].hasOutstanding = FALSE;
+            sockets[fd].localFinAcknowledged = TRUE;
             sockets[fd].elapsedSeconds = 0;
             if (sockets[fd].state == FIN_WAIT_1) {
                setState(fd, FIN_WAIT_2);
             } else if (sockets[fd].state == LAST_ACK) {
-               signal Transport.connectionClosed(fd);
-               clearSocket(fd);
+               // Retain the passive tuple too, so delayed packets cannot reopen it.
+               sockets[fd].timeWaitSeconds = 0;
+               sockets[fd].timeWaitExpired = FALSE;
+               setState(fd, TIME_WAIT);
             }
+            releaseIfDrained(fd);
          }
       }
    }
@@ -263,6 +278,11 @@ implementation {
          dbg(TRANSPORT_CHANNEL,
              "Node %d TCP fd %d dropped malformed data length %d\n",
              TOS_NODE_ID, fd, segment->dataLength);
+         sendAck(fd);
+         return;
+      }
+
+      if (sockets[fd].peerFinReceived) {
          sendAck(fd);
          return;
       }
@@ -384,6 +404,7 @@ implementation {
          memmove(sockets[fd].rcvdBuff,
                  &sockets[fd].rcvdBuff[amount], sockets[fd].rcvLength);
          sendAck(fd);
+         releaseIfDrained(fd);
       }
       return amount;
    }
@@ -461,10 +482,14 @@ implementation {
          sockets[fd].sendNext = TCP_INITIAL_SEQUENCE + 1;
          sockets[fd].sendUna = 0;
          sockets[fd].rcvNext = segment->seq + 1;
+         sockets[fd].remoteInitialSequence = segment->seq;
          sockets[listener].pendingChild = fd;
          setState(fd, SYN_RCVD);
          sendSegment(fd, TCP_FLAG_SYN | TCP_FLAG_ACK, TCP_INITIAL_SEQUENCE,
                      sockets[fd].rcvNext, NULL, 0, TRUE);
+         // Keep SYN-ACK available after its ACK so duplicate SYNs get the same reply.
+         memcpy(&sockets[fd].handshakeReply, &sockets[fd].lastSegment,
+                sizeof(tcp_segment_t));
          return SUCCESS;
       }
 
@@ -478,7 +503,8 @@ implementation {
 
       if (sockets[fd].state == SYN_RCVD &&
           (segment->flags & TCP_FLAG_SYN) &&
-          !(segment->flags & TCP_FLAG_ACK)) {
+          !(segment->flags & TCP_FLAG_ACK) &&
+          segment->seq == sockets[fd].remoteInitialSequence) {
          resendOutstanding(fd);
          return SUCCESS;
       }
@@ -490,6 +516,7 @@ implementation {
             sockets[fd].hasOutstanding = FALSE;
             sockets[fd].sendUna = segment->ack;
             sockets[fd].rcvNext = segment->seq + 1;
+            sockets[fd].remoteInitialSequence = segment->seq;
             setState(fd, ESTABLISHED);
             sendAck(fd);
             signal Transport.connectionEstablished(fd);
@@ -519,8 +546,24 @@ implementation {
 
       if (sockets[fd].state == ESTABLISHED &&
           (segment->flags & (TCP_FLAG_SYN | TCP_FLAG_ACK)) ==
-             (TCP_FLAG_SYN | TCP_FLAG_ACK)) {
+             (TCP_FLAG_SYN | TCP_FLAG_ACK) &&
+          segment->ack == TCP_INITIAL_SEQUENCE + 1 &&
+          segment->seq == sockets[fd].remoteInitialSequence) {
          sendAck(fd);
+         return SUCCESS;
+      }
+
+      if (sockets[fd].state == ESTABLISHED &&
+          segment->flags == TCP_FLAG_SYN &&
+          segment->seq == sockets[fd].remoteInitialSequence &&
+          sockets[fd].handshakeReply.flags ==
+             (TCP_FLAG_SYN | TCP_FLAG_ACK)) {
+         // The tuple already exists; replay the original SYN-ACK without allocating.
+         uint8_t payload[PACKET_MAX_PAYLOAD_SIZE];
+         memset(payload, 0, sizeof(payload));
+         memcpy(payload, &sockets[fd].handshakeReply,
+                sizeof(tcp_segment_t));
+         call Network.send(sockets[fd].remoteAddr, payload);
          return SUCCESS;
       }
 
@@ -532,8 +575,10 @@ implementation {
       }
 
       if (segment->flags & TCP_FLAG_FIN) {
-         if (segment->seq == sockets[fd].rcvNext) {
+         if (!sockets[fd].peerFinReceived &&
+             segment->seq == sockets[fd].rcvNext) {
             sockets[fd].rcvNext++;
+            sockets[fd].peerFinReceived = TRUE;
             sendAck(fd);
             if (sockets[fd].state == FIN_WAIT_1 ||
                 sockets[fd].state == FIN_WAIT_2) {
@@ -541,14 +586,22 @@ implementation {
                    "Node %d sends the final ACK\n", TOS_NODE_ID);
             }
             if (sockets[fd].state == ESTABLISHED) {
-               sendFin(fd, LAST_ACK);
+               // Drain queued server data before its FIN; close blocks new writes.
+               sockets[fd].closeRequested = TRUE;
+               pumpData(fd);
             } else if (sockets[fd].state == FIN_WAIT_1 ||
                        sockets[fd].state == FIN_WAIT_2) {
-               sockets[fd].hasOutstanding = FALSE;
                sockets[fd].timeWaitSeconds = 0;
+               sockets[fd].timeWaitExpired = FALSE;
                setState(fd, TIME_WAIT);
             }
          } else {
+            if (sockets[fd].state == TIME_WAIT &&
+                segment->seq + 1 == sockets[fd].rcvNext) {
+               // A repeated FIN gets a fresh full retention window after its ACK.
+               sockets[fd].timeWaitSeconds = 0;
+               sockets[fd].timeWaitExpired = FALSE;
+            }
             sendAck(fd);
          }
       }
@@ -569,13 +622,14 @@ implementation {
       for (fd = 0; fd < MAX_NUM_OF_SOCKETS; fd++) {
          if (!sockets[fd].allocated) continue;
 
-         if (sockets[fd].state == TIME_WAIT) {
+         if (sockets[fd].state == TIME_WAIT &&
+             !sockets[fd].timeWaitExpired) {
             sockets[fd].timeWaitSeconds++;
             if (sockets[fd].timeWaitSeconds >= TCP_TIME_WAIT_SECONDS) {
-               signal Transport.connectionClosed(fd);
-               clearSocket(fd);
+               sockets[fd].timeWaitExpired = TRUE;
             }
-         } else if (sockets[fd].hasOutstanding) {
+         }
+         if (sockets[fd].hasOutstanding) {
             sockets[fd].elapsedSeconds++;
             if (sockets[fd].elapsedSeconds >= TCP_RTO_SECONDS) {
                if (sockets[fd].retries >= TCP_MAX_RETRIES) {
@@ -590,6 +644,7 @@ implementation {
                }
             }
          }
+         releaseIfDrained(fd);
       }
    }
 }

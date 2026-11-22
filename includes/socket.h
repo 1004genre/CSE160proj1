@@ -47,6 +47,7 @@ typedef struct socket_store_t{
     socket_port_t localPort;
     uint16_t remoteAddr;
     socket_port_t remotePort;
+    uint16_t remoteInitialSequence;
     socket_t pendingChild;
     uint8_t sendBuff[SOCKET_BUFFER_SIZE];
     uint16_t sendLength;
@@ -57,8 +58,12 @@ typedef struct socket_store_t{
     uint16_t rcvLength;
     uint16_t rcvNext;
     tcp_segment_t lastSegment;
+    tcp_segment_t handshakeReply;
     bool hasOutstanding;
     bool closeRequested;
+    bool peerFinReceived;
+    bool localFinAcknowledged;
+    bool timeWaitExpired;
     // A shared timer ticks these per-connection retry and TIME_WAIT counters.
     uint8_t retries;
     uint8_t elapsedSeconds;

@@ -14,8 +14,9 @@ enum {
    TCP_FLAG_DATA = 4,
    TCP_FLAG_FIN = 8,
    TCP_RTO_SECONDS = 3,
-   TCP_TIME_WAIT_SECONDS = 6,
    TCP_MAX_RETRIES = 5,
+   // 18s retains tuples for the 3s initial RTO and all five 3s retries.
+   TCP_TIME_WAIT_SECONDS = TCP_RTO_SECONDS * (TCP_MAX_RETRIES + 1),
    TCP_TIMER_INTERVAL_MS = 1000
 };
 
