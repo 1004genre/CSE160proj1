@@ -178,8 +178,8 @@ a TTL-2 ping over the 3-hop line.
 * Hop-count metric; `DV_INFINITY = 16`. Finite costs are 0 through 15.
 * The route table has 256 statically allocated destination slots (IDs 0-255).
   The neighbor table has 32 slots; excess neighbors are logged and ignored.
-* The packet remains 28 bytes, including the 8-byte network header. A DV
-  payload has a count byte and at most 9 destination/cost pairs. Larger vectors
+* The packet is 29 bytes, including the compact 7-byte network header. A DV
+  payload has a count byte and at most 10 destination/cost pairs. Larger vectors
   are serialized into successive packets; queue-full pages are retried.
 * Neighbor discovery sends beacons every 1 second after a randomized initial
   delay, expires a neighbor after 5 missed periods, and confirms bidirectional
@@ -256,9 +256,22 @@ closes, drops one reopening update, and verifies probe recovery without buffer
 overflow. It also verifies the bytes and cleanup.
 Detailed output is saved to `logs/project3-mid-review.log`.
 
-Project 3 uses the 29-byte course packet budget: an 8-byte network header and
-21-byte payload. Its 9-byte transport header leaves 12 data bytes per segment.
-The sender window is 48 bytes and is limited by the peer's advertised receive
+Project 3 uses the 29-byte course packet budget. The encoded course link-layer
+header contributes 0 bytes inside this payload: `SimpleSend.send` receives the
+next-hop address separately, and TinyOS AM framing is outside the 29-byte
+budget. The encoded network header is 7 bytes (16-bit end-to-end destination,
+16-bit source, 16-bit packet ID, and one byte with 4-bit TTL and 4-bit protocol);
+its transport payload is 22 bytes. The encoded transport header is 8 bytes
+(two 8-bit ports, one packed type/length byte,
+16-bit sequence and acknowledgment numbers, and an 8-bit receive window), so
+combined in-payload overhead is 15 bytes and each segment carries 14 data
+bytes. The
+`nx_struct` fields use network byte order, and compile-time size checks reject
+padding that would break the 29-byte packet or 22-byte transport payload. The
+packet ID remains distinct from transport byte positions, while forwarding
+obtains the next hop from the routing interface. TinyOS AM fields are outside
+the 29-byte course budget. The sender window is 56 bytes (four segments) and is
+limited by the peer's advertised receive
 window, which counts acknowledged data until the test application reads it.
 Outstanding bytes consume part of that window; zero-window probes request
 updates without sending application data. Each connection is capped at 1,024

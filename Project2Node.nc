@@ -40,8 +40,8 @@ implementation {
       if (len != sizeof(pack)) return msg;
 
       received = (pack *)payload;
-      if (received->protocol == PROTOCOL_PING ||
-          received->protocol == PROTOCOL_PINGREPLY) {
+      if (PACK_PROTOCOL(received) == PROTOCOL_PING ||
+          PACK_PROTOCOL(received) == PROTOCOL_PINGREPLY) {
          if (call AMPacket.destination(msg) == AM_BROADCAST_ADDR) return msg;
          processRouted(received);
       }
@@ -94,7 +94,7 @@ implementation {
       uint16_t next;
       uint8_t cost;
 
-      if (p->TTL == 0) {
+      if (PACK_TTL(p) == 0) {
          dbg(ROUTING_CHANNEL,
              "Node %d dropped packet src %d dest %d seq %d: TTL expired\n",
              TOS_NODE_ID, p->src, p->dest, p->seq);
@@ -102,14 +102,14 @@ implementation {
       }
 
       if (p->dest == TOS_NODE_ID) {
-         if (p->protocol == PROTOCOL_PING) {
+         if (PACK_PROTOCOL(p) == PROTOCOL_PING) {
             pack reply;
             makePack(&reply, TOS_NODE_ID, p->src, MAX_TTL,
                      PROTOCOL_PINGREPLY, nextSequenceNumber++, p->payload);
             dbg(ROUTING_CHANNEL, "Node %d delivered ping from %d seq %d\n",
                 TOS_NODE_ID, p->src, p->seq);
             sendRouted(&reply);
-         } else if (p->protocol == PROTOCOL_PINGREPLY) {
+         } else if (PACK_PROTOCOL(p) == PROTOCOL_PINGREPLY) {
             dbg(ROUTING_CHANNEL,
                 "Node %d received ping reply from %d seq %d\n",
                 TOS_NODE_ID, p->src, p->seq);
@@ -117,7 +117,7 @@ implementation {
          return;
       }
 
-      if (p->TTL <= 1) {
+      if (PACK_TTL(p) <= 1) {
          dbg(ROUTING_CHANNEL,
              "Node %d dropped packet src %d dest %d seq %d: TTL expired\n",
              TOS_NODE_ID, p->src, p->dest, p->seq);
@@ -131,7 +131,7 @@ implementation {
          return;
       }
 
-      p->TTL = p->TTL - 1;
+      PACK_SET_TTL(p, PACK_TTL(p) - 1);
       if (call Sender.send(*p, next) == SUCCESS) {
          dbg(ROUTING_CHANNEL,
              "Node %d Routing Packet - src: %d, dest: %d, seq: %d, next hop: %d, cost: %d\n",
@@ -172,9 +172,8 @@ implementation {
                  uint8_t protocol, uint16_t seq, const void *payload) {
       p->src = src;
       p->dest = dest;
-      p->TTL = ttl;
       p->seq = seq;
-      p->protocol = protocol;
+      p->ttlProtocol = ((ttl & 0x0f) << 4) | (protocol & 0x0f);
       memcpy(p->payload, payload, PACKET_MAX_PAYLOAD_SIZE);
    }
 }

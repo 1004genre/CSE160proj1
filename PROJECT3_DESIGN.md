@@ -52,14 +52,21 @@ case. Broader loss scenarios and long transfers remain separate validation stage
   sequence positions and byte counts with widths that can represent the full
   supported transfer; do not use byte-sized counters for cumulative sequence
   positions.
-- The implemented transport header contains source and destination ports,
-  flags, data length, 16-bit sequence and acknowledgment numbers, and an
-  advertised receive window. The encoded header is 9 bytes; the 21-byte
-  network payload therefore carries at most 12 data bytes per segment.
-- The Project 3 packet budget is the course's 29 bytes: an 8-byte network
-  header plus a 21-byte transport payload. The 9-byte transport header leaves
-  12 bytes for data. `TOSH_DATA_LENGTH` is set to 29 so the configured TinyOS
-  payload matches that budget; no extra bytes are added for AM fields.
+- The 8-byte transport header contains two 8-bit ports, a packed type/length
+  code, 16-bit sequence and acknowledgment numbers, and an 8-bit advertised
+  window. Distinct control codes represent SYN, SYN-ACK, ACK, FIN, and probe;
+  data codes 5..18 encode lengths 1..14 in the low five bits. Control types
+  carry no data; the upper three bits are reserved as zero.
+- The Project 3 packet budget is the course's 29 bytes: a 7-byte network
+  header plus a 22-byte transport payload. The network header has 16-bit
+  end-to-end source/destination addresses, a distinct 16-bit packet ID, an
+  combined 4-bit TTL and 4-bit protocol. The in-payload link-layer header is
+  zero bytes because the next hop is passed separately to `SimpleSend`; AM
+  fields are outside this course budget. The 8-byte transport header leaves
+  14 bytes per segment, for 15 bytes total in-payload overhead. `nx_struct`
+  encodes multibyte fields in network byte order; compile-time size checks
+  enforce 29-byte packets and 22-byte transport segments without padding.
+  `TOSH_DATA_LENGTH` remains 29.
 - Transport sequence numbers are 16-bit and deliberately do not wrap. Each
   direction starts with SYN sequence 0; up to 1,024 data bytes use sequences
   1..1,024, FIN uses 1,025, and its cumulative ACK is 1,026. The API enforces
@@ -104,7 +111,7 @@ the application retries any unaccepted suffix after `sendReady` reports space.
 
 The advertised receive window is `128 - rcvLength`; acknowledged bytes remain
 counted until `Transport.read` consumes them. The sender limits outstanding
-bytes to the smaller of its 48-byte fixed window and the peer window relative
+bytes to the smaller of its 56-byte fixed window and the peer window relative
 to the cumulative ACK, so already outstanding bytes use part of that allowance.
 It sends a shorter segment when only a partial window remains. At zero window,
 it stops new data and sends a non-sequenced window probe every 3 seconds. A
@@ -121,7 +128,7 @@ then checks that a later probe recovers the window and logged receive occupancy
 never exceeds 128 bytes.
 
 Transport timer work scans a fixed table of at most ten sockets. Each retry is
-limited to the current 48-byte sender window (at most four 12-byte segments),
+limited to the current 56-byte sender window (at most four 14-byte segments),
 and each routing event forwards one packet. Missing routes or a full network
 send queue leave transport bytes and sequence ranges retained for the next
 retry; every retry resolves its next hop again, so a repaired route can choose
@@ -134,7 +141,7 @@ on their own components while transport retries wait.
 |---|---|---|
 | 0. Packet and routing boundary (implemented) | Confirm current packet size; encode the TCP header; add routed TCP dispatch and `Project3C` | Project 3 builds; compiled packet/segment sizes are logged; Project 1/2 builds remain valid |
 | 1. Connection setup (implemented) | Static tuple-indexed records, persistent listener, SYN/SYN-ACK/ACK, duplicate SYN handling, handshake retry | Repeatable 1-2-3 handshake; listener remains available |
-| 2. Fixed sliding-window data (implemented) | Retained 128-byte send buffer, 12-byte segments, four-segment sender window, advertised peer-window limit, in-order receiver, cumulative ACK, go-back-N retry | Demo confirms 24 bytes outstanding, resumes after partial writes, and transfers 256 bytes byte-exactly over 1-2-3 |
+| 2. Fixed sliding-window data (implemented) | Retained 128-byte send buffer, 14-byte segments, four-segment sender window, advertised peer-window limit, in-order receiver, cumulative ACK, go-back-N retry | Demo confirms 28 bytes outstanding, resumes after partial writes, and transfers 256 bytes byte-exactly over 1-2-3 |
 | 3. Orderly close (implemented) | Drain data before FIN; peer FIN/final ACK; bounded retry and TIME_WAIT cleanup | Mid-review script completes setup, transfer, and teardown with state logs |
 | 4. Longer sliding-window validation | Transfer at least 1,024 bytes; validate partial ACK advancement and sequence-range retransmission | Byte-exact long transfer with bounded sender and receiver buffers |
 | 5. Zero-window validation | 128-byte receive occupancy; test consumer pauses/resumes; probe/recovery for lost reopening update | Sender stops at zero window, resumes, and receiver never overflows |
@@ -202,6 +209,7 @@ both endpoints' cleanup. Full TOSSIM output is written to
 `logs/project3-mid-review.log`.
 
 For a live explanation, point out that the listener stays separate from its
-accepted child; show the 9-byte header/12-byte data budget, multiple
-outstanding segments, cumulative ACKs, the 48-byte sender window, advertised
+accepted child; show the 8-byte transport header/14-byte data capacity, the
+15-byte combined overhead, multiple outstanding segments, cumulative ACKs,
+the 56-byte sender window, advertised
 receive windows, and the fixed 3-second retry timer.

@@ -87,8 +87,7 @@ implementation {
       beacon.src = TOS_NODE_ID;
       beacon.dest = AM_BROADCAST_ADDR;
       beacon.seq = nextBeaconSequence++;
-      beacon.TTL = 1;
-      beacon.protocol = PROTOCOL_NAME;
+      beacon.ttlProtocol = (1 << 4) | PROTOCOL_NAME;
       memset(beacon.payload, 0, PACKET_MAX_PAYLOAD_SIZE);
       beacon.payload[0] = 'N';
       beacon.payload[1] = 'D';
@@ -133,7 +132,7 @@ implementation {
       pack *received;
       if (len != sizeof(pack)) return msg;
       received = (pack *)payload;
-      if (received->protocol == PROTOCOL_NAME && received->TTL == 1 &&
+      if (PACK_PROTOCOL(received) == PROTOCOL_NAME && PACK_TTL(received) == 1 &&
           received->payload[0] == 'N' && received->src != TOS_NODE_ID) {
          if (received->payload[1] == 'D') {
              sendNeighborMessage(received->src, 'A', received->seq);
@@ -155,8 +154,7 @@ implementation {
       message.src = TOS_NODE_ID;
       message.dest = destination;
       message.seq = sequence;
-      message.TTL = 1;
-      message.protocol = PROTOCOL_NAME;
+      message.ttlProtocol = (1 << 4) | PROTOCOL_NAME;
       memset(message.payload, 0, PACKET_MAX_PAYLOAD_SIZE);
       message.payload[0] = 'N';
       message.payload[1] = kind;

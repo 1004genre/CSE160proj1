@@ -37,8 +37,8 @@ implementation {
 
    // Added: processes one received ping or reply, forwarding only first arrivals.
    command void Flooding.receive(pack *received) {
-      if (received->protocol != PROTOCOL_PING &&
-          received->protocol != PROTOCOL_PINGREPLY) {
+      if (PACK_PROTOCOL(received) != PROTOCOL_PING &&
+          PACK_PROTOCOL(received) != PROTOCOL_PINGREPLY) {
          return;
       }
       if (wasSeen(received)) {
@@ -50,7 +50,7 @@ implementation {
       logFlood("received", received);
 
       if (received->dest == TOS_NODE_ID) {
-         if (received->protocol == PROTOCOL_PING) {
+         if (PACK_PROTOCOL(received) == PROTOCOL_PING) {
             makePack(&sendPackage, TOS_NODE_ID, received->src, MAX_TTL,
                      PROTOCOL_PINGREPLY, nextSequenceNumber++, (uint8_t *)received->payload,
                      PACKET_MAX_PAYLOAD_SIZE);
@@ -60,8 +60,8 @@ implementation {
          } else {
             logFlood("reply received", received);
          }
-      } else if (received->TTL > 1) {
-         received->TTL = received->TTL - 1;
+      } else if (PACK_TTL(received) > 1) {
+         PACK_SET_TTL(received, PACK_TTL(received) - 1);
          flood(received);
       }
    }
@@ -97,17 +97,16 @@ implementation {
    void logFlood(char *action, pack *p) {
        dbg(FLOODING_CHANNEL,
           "FLOOD %s: node=%d src=%d dst=%d seq=%d ttl=%d protocol=%d payload=%s\n",
-           action, TOS_NODE_ID, p->src, p->dest, p->seq, p->TTL,
-          p->protocol, (char *)p->payload);
+           action, TOS_NODE_ID, p->src, p->dest, p->seq, PACK_TTL(p),
+          PACK_PROTOCOL(p), (char *)p->payload);
    }
 
    void makePack(pack *p, uint16_t src, uint16_t dest, uint8_t ttl,
                  uint8_t protocol, uint16_t seq, uint8_t *payload, uint8_t length) {
       p->src = src;
       p->dest = dest;
-      p->TTL = ttl;
       p->seq = seq;
-      p->protocol = protocol;
+      p->ttlProtocol = ((ttl & 0x0f) << 4) | (protocol & 0x0f);
       memcpy(p->payload, payload, length);
    }
 }

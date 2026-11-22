@@ -126,9 +126,9 @@ implementation {
       if (len != sizeof(pack)) return msg;
 
       received = (pack *)payload;
-      if (received->protocol == PROTOCOL_PING ||
-          received->protocol == PROTOCOL_PINGREPLY ||
-          received->protocol == PROTOCOL_TCP) {
+      if (PACK_PROTOCOL(received) == PROTOCOL_PING ||
+          PACK_PROTOCOL(received) == PROTOCOL_PINGREPLY ||
+          PACK_PROTOCOL(received) == PROTOCOL_TCP) {
          if (call AMPacket.destination(msg) != AM_BROADCAST_ADDR) {
             processRouted(received);
          }
@@ -375,12 +375,12 @@ implementation {
       // Each transport transmission, including a retry, gets a fresh network packet ID.
       makePack(&p, TOS_NODE_ID, destination, MAX_TTL, PROTOCOL_TCP,
                nextSequenceNumber++, payload);
-      if (segment->flags == TCP_FLAG_ACK && segment->window == 0) {
+      if (segment->kindLength == TCP_CODE_ACK && segment->window == 0) {
          sawZeroWindow = TRUE;
          dbg(TRANSPORT_CHANNEL,
              "Node %d TCP test receiver advertised zero window\n", TOS_NODE_ID);
       }
-      if (dropNextWindowUpdate && segment->flags == TCP_FLAG_ACK &&
+      if (dropNextWindowUpdate && segment->kindLength == TCP_CODE_ACK &&
           segment->window > 0) {
          dropNextWindowUpdate = FALSE;
          dbg(TRANSPORT_CHANNEL,
@@ -399,16 +399,16 @@ implementation {
       uint16_t next;
       uint8_t cost;
 
-      if (p->TTL == 0) return;
+      if (PACK_TTL(p) == 0) return;
       if (p->dest == TOS_NODE_ID) {
-         if (p->protocol == PROTOCOL_TCP) {
+         if (PACK_PROTOCOL(p) == PROTOCOL_TCP) {
             call Transport.receive(p);
-         } else if (p->protocol == PROTOCOL_PING) {
+         } else if (PACK_PROTOCOL(p) == PROTOCOL_PING) {
             pack reply;
             makePack(&reply, TOS_NODE_ID, p->src, MAX_TTL,
                      PROTOCOL_PINGREPLY, nextSequenceNumber++, p->payload);
             sendRouted(&reply);
-         } else if (p->protocol == PROTOCOL_PINGREPLY) {
+         } else if (PACK_PROTOCOL(p) == PROTOCOL_PINGREPLY) {
             dbg(ROUTING_CHANNEL,
                 "Node %d received ping reply from %d seq %d\n",
                 TOS_NODE_ID, p->src, p->seq);
@@ -416,7 +416,7 @@ implementation {
          return;
       }
 
-      if (p->TTL <= 1 ||
+      if (PACK_TTL(p) <= 1 ||
           !call DistanceVector.nextHop(p->dest, &next, &cost)) {
          dbg(ROUTING_CHANNEL,
              "Node %d dropped routed packet src %d dest %d seq %d\n",
@@ -424,7 +424,7 @@ implementation {
          return;
       }
 
-      p->TTL = p->TTL - 1;
+      PACK_SET_TTL(p, PACK_TTL(p) - 1);
       // Each forwarding event handles one packet, so routing work stays bounded.
       if (call Sender.send(*p, next) == SUCCESS) {
          dbg(ROUTING_CHANNEL,
@@ -461,9 +461,8 @@ implementation {
                  uint8_t protocol, uint16_t seq, const void *payload) {
       p->src = src;
       p->dest = dest;
-      p->TTL = ttl;
       p->seq = seq;
-      p->protocol = protocol;
+      p->ttlProtocol = ((ttl & 0x0f) << 4) | (protocol & 0x0f);
       memcpy(p->payload, payload, PACKET_MAX_PAYLOAD_SIZE);
    }
 }

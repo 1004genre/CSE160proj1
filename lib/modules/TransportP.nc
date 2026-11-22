@@ -14,6 +14,14 @@ module TransportP {
 implementation {
    socket_store_t sockets[MAX_NUM_OF_SOCKETS];
 
+   uint8_t segmentDataLength(tcp_segment_t *segment) {
+      if (segment->kindLength > TCP_CODE_DATA_BASE &&
+          segment->kindLength <= TCP_CODE_DATA_BASE + TCP_DATA_SIZE) {
+         return segment->kindLength - TCP_CODE_DATA_BASE;
+      }
+      return 0;
+   }
+
    char *stateName(enum socket_state state) {
       switch (state) {
          case LISTEN: return "LISTEN";
@@ -142,7 +150,7 @@ implementation {
       return SOCKET_BUFFER_SIZE - connection->rcvLength;
    }
 
-   error_t sendSegment(socket_t fd, uint8_t flags, uint16_t seq,
+   error_t sendSegment(socket_t fd, uint8_t kind, uint16_t seq,
                        uint16_t ack, const uint8_t *data, uint8_t length,
                        bool track) {
       tcp_segment_t segment;
@@ -151,12 +159,15 @@ implementation {
 
       if (!validSocket(fd) || length > TCP_DATA_SIZE ||
           (length > 0 && data == NULL)) return FAIL;
+      if ((kind == TCP_KIND_DATA && length == 0) ||
+          (kind != TCP_KIND_DATA && length != 0)) return FAIL;
 
       memset(&segment, 0, sizeof(segment));
       segment.srcPort = sockets[fd].localPort;
       segment.destPort = sockets[fd].remotePort;
-      segment.flags = flags;
-      segment.dataLength = length;
+      // Data length shares the kind byte; control kinds carry no application data.
+      segment.kindLength = kind == TCP_KIND_DATA ?
+                          TCP_CODE_DATA_BASE + length : kind;
       segment.seq = seq;
       segment.ack = ack;
       segment.window = receiveWindow(&sockets[fd]);
@@ -174,8 +185,8 @@ implementation {
       // Failed tracked sends keep their sequence range for a later transport retry.
       result = call Network.send(sockets[fd].remoteAddr, payload);
       dbg(TRANSPORT_CHANNEL,
-          "Node %d TCP fd %d send flags %d seq %d ack %d len %d window %d%s\n",
-          TOS_NODE_ID, fd, flags, seq, ack, length, segment.window,
+          "Node %d TCP fd %d send code %d seq %d ack %d len %d window %d%s\n",
+          TOS_NODE_ID, fd, segment.kindLength, seq, ack, length, segment.window,
           track ? " tracked" : "");
       return result;
    }
@@ -189,7 +200,7 @@ implementation {
       while (length > 0) {
          chunk = length > TCP_DATA_SIZE ? TCP_DATA_SIZE : length;
          // Replaying a retained range does not advance sequence or app byte counts.
-         sendSegment(fd, TCP_FLAG_DATA, sequence, 0,
+         sendSegment(fd, TCP_KIND_DATA, sequence, 0,
                      &sockets[fd].sendBuff[offset], chunk, FALSE);
          sequence += chunk;
          offset += chunk;
@@ -221,7 +232,7 @@ implementation {
    }
 
    void sendAck(socket_t fd) {
-      sendSegment(fd, TCP_FLAG_ACK, sockets[fd].sendNext,
+      sendSegment(fd, TCP_CODE_ACK, sockets[fd].sendNext,
                   sockets[fd].rcvNext, NULL, 0, FALSE);
    }
 
@@ -234,7 +245,7 @@ implementation {
              "Node %d sends FIN\n", TOS_NODE_ID);
       }
       // FIN consumes one sequence number; its ACK is sent separately.
-      sendSegment(fd, TCP_FLAG_FIN, seq, 0, NULL, 0, TRUE);
+      sendSegment(fd, TCP_CODE_FIN, seq, 0, NULL, 0, TRUE);
    }
 
    void pumpData(socket_t fd) {
@@ -268,7 +279,7 @@ implementation {
             sockets[fd].elapsedSeconds = 0;
          }
          // Fill the fixed sender window with separate data and ACK segments.
-         sendSegment(fd, TCP_FLAG_DATA, sockets[fd].sendNext, 0,
+         sendSegment(fd, TCP_KIND_DATA, sockets[fd].sendNext, 0,
                      &sockets[fd].sendBuff[outstanding], length, FALSE);
          sockets[fd].sendNext += length;
          outstanding += length;
@@ -296,12 +307,12 @@ implementation {
       uint16_t outstanding;
       uint8_t previousWindow;
 
-      if (!(segment->flags & TCP_FLAG_ACK)) return;
+      if (segment->kindLength != TCP_CODE_ACK) return;
       if (sockets[fd].sendNext < sockets[fd].sendUna ||
           sockets[fd].sendLength > SOCKET_BUFFER_SIZE) return;
       highestSent = sockets[fd].sendNext;
       if (sockets[fd].controlOutstanding &&
-          (sockets[fd].lastSegment.flags & TCP_FLAG_FIN)) {
+          sockets[fd].lastSegment.kindLength == TCP_CODE_FIN) {
          highestSent = sockets[fd].lastSegment.seq + 1;
       }
       // ACKs outside sent sequence space cannot move the window or free storage.
@@ -322,7 +333,7 @@ implementation {
          sockets[fd].elapsedSeconds = 0;
       }
       if (sockets[fd].controlOutstanding) {
-         if ((sockets[fd].lastSegment.flags & TCP_FLAG_FIN) &&
+         if (sockets[fd].lastSegment.kindLength == TCP_CODE_FIN &&
              segment->ack == sockets[fd].lastSegment.seq + 1) {
             sockets[fd].sendUna = segment->ack;
             sockets[fd].hasOutstanding = FALSE;
@@ -371,12 +382,12 @@ implementation {
    }
 
    void receiveData(socket_t fd, tcp_segment_t *segment) {
-      if (segment->dataLength == 0) return;
-      if (!(segment->flags & TCP_FLAG_DATA) ||
-          segment->dataLength > TCP_DATA_SIZE) {
+      uint8_t length = segmentDataLength(segment);
+      if (length == 0) return;
+      if (length > TCP_DATA_SIZE) {
          dbg(TRANSPORT_CHANNEL,
              "Node %d TCP fd %d dropped malformed data length %d\n",
-             TOS_NODE_ID, fd, segment->dataLength);
+             TOS_NODE_ID, fd, length);
          return;
       }
 
@@ -385,7 +396,7 @@ implementation {
          return;
       }
       if (sockets[fd].rcvTotal > TCP_MAX_TRANSFER_BYTES ||
-          segment->dataLength > TCP_MAX_TRANSFER_BYTES - sockets[fd].rcvTotal) {
+          length > TCP_MAX_TRANSFER_BYTES - sockets[fd].rcvTotal) {
          sendAck(fd);
          return;
       }
@@ -397,19 +408,19 @@ implementation {
 
       // Accept only the next expected byte; discard gaps and duplicates, then ACK the gap edge.
       if (segment->seq == sockets[fd].rcvNext &&
-          segment->dataLength <= SOCKET_BUFFER_SIZE - sockets[fd].rcvLength) {
+          length <= SOCKET_BUFFER_SIZE - sockets[fd].rcvLength) {
          memcpy(&sockets[fd].rcvdBuff[sockets[fd].rcvLength],
-                segment->data, segment->dataLength);
-         sockets[fd].rcvLength += segment->dataLength;
-         sockets[fd].rcvTotal += segment->dataLength;
-         sockets[fd].rcvNext += segment->dataLength;
+                segment->data, length);
+         sockets[fd].rcvLength += length;
+         sockets[fd].rcvTotal += length;
+         sockets[fd].rcvNext += length;
          dbg(TRANSPORT_CHANNEL,
              "Node %d TCP fd %d receive buffer %d/128 window %d\n",
              TOS_NODE_ID, fd, sockets[fd].rcvLength,
              receiveWindow(&sockets[fd]));
          dbg(TRANSPORT_CHANNEL,
              "Node %d TCP fd %d accepted data seq %d len %d next %d\n",
-             TOS_NODE_ID, fd, segment->seq, segment->dataLength,
+             TOS_NODE_ID, fd, segment->seq, length,
              sockets[fd].rcvNext);
          sendAck(fd);
          signal Transport.dataReceived(fd);
@@ -482,7 +493,7 @@ implementation {
       sockets[fd].sendUna = TCP_INITIAL_SEQUENCE;
       sockets[fd].sendNext = TCP_INITIAL_SEQUENCE + 1;
       setState(fd, SYN_SENT);
-      sendSegment(fd, TCP_FLAG_SYN, TCP_INITIAL_SEQUENCE, 0, NULL, 0, TRUE);
+      sendSegment(fd, TCP_CODE_SYN, TCP_INITIAL_SEQUENCE, 0, NULL, 0, TRUE);
       return SUCCESS;
    }
 
@@ -558,21 +569,19 @@ implementation {
       socket_t fd;
       socket_t listener;
       bool controlOnly;
+      uint8_t dataLength;
 
-      if (package == NULL || package->protocol != PROTOCOL_TCP) return FAIL;
+      if (package == NULL || PACK_PROTOCOL(package) != PROTOCOL_TCP) return FAIL;
       segment = (tcp_segment_t *)package->payload;
-      controlOnly = segment->flags == TCP_FLAG_SYN ||
-                    segment->flags == TCP_FLAG_ACK ||
-                    segment->flags == (TCP_FLAG_SYN | TCP_FLAG_ACK) ||
-                    segment->flags == TCP_FLAG_FIN ||
-                    segment->flags == TCP_FLAG_PROBE;
+      dataLength = segmentDataLength(segment);
+      controlOnly = segment->kindLength == TCP_CODE_SYN ||
+                    segment->kindLength == TCP_CODE_ACK ||
+                    segment->kindLength == TCP_CODE_SYN_ACK ||
+                    segment->kindLength == TCP_CODE_FIN ||
+                    segment->kindLength == TCP_CODE_PROBE;
       // Accept only handshake, pure ACK, FIN, probe, or data-only wire forms.
       if (segment->window > SOCKET_BUFFER_SIZE ||
-          (!controlOnly && segment->flags != TCP_FLAG_DATA) ||
-          (controlOnly && segment->dataLength != 0) ||
-          (segment->flags == TCP_FLAG_DATA &&
-           (segment->dataLength == 0 ||
-            segment->dataLength > TCP_DATA_SIZE))) {
+          (!controlOnly && dataLength == 0)) {
          dbg(TRANSPORT_CHANNEL, "Node %d TCP dropped malformed segment\n",
              TOS_NODE_ID);
          return FAIL;
@@ -580,8 +589,7 @@ implementation {
 
       fd = findConnection(package->src, segment->srcPort,
                           package->dest, segment->destPort);
-      if (fd == SOCKET_NONE && (segment->flags & TCP_FLAG_SYN) &&
-          !(segment->flags & TCP_FLAG_ACK)) {
+      if (fd == SOCKET_NONE && segment->kindLength == TCP_CODE_SYN) {
          // All nodes use ISN zero so plain integer comparisons remain no-wrap safe.
          if (segment->seq != TCP_INITIAL_SEQUENCE) return FAIL;
          listener = findListener(package->dest, segment->destPort);
@@ -616,7 +624,7 @@ implementation {
          sockets[fd].remoteInitialSequence = segment->seq;
          sockets[listener].pendingChild = fd;
          setState(fd, SYN_RCVD);
-         sendSegment(fd, TCP_FLAG_SYN | TCP_FLAG_ACK, TCP_INITIAL_SEQUENCE,
+         sendSegment(fd, TCP_CODE_SYN_ACK, TCP_INITIAL_SEQUENCE,
                      sockets[fd].rcvNext, NULL, 0, TRUE);
          // Keep SYN-ACK available after its ACK so duplicate SYNs get the same reply.
          memcpy(&sockets[fd].handshakeReply, &sockets[fd].lastSegment,
@@ -633,16 +641,14 @@ implementation {
       }
 
       if (sockets[fd].state == SYN_RCVD &&
-          (segment->flags & TCP_FLAG_SYN) &&
-          !(segment->flags & TCP_FLAG_ACK) &&
+          segment->kindLength == TCP_CODE_SYN &&
           segment->seq == sockets[fd].remoteInitialSequence) {
          resendOutstanding(fd);
          return SUCCESS;
       }
 
       if (sockets[fd].state == SYN_SENT) {
-         if ((segment->flags & (TCP_FLAG_SYN | TCP_FLAG_ACK)) ==
-                (TCP_FLAG_SYN | TCP_FLAG_ACK) &&
+         if (segment->kindLength == TCP_CODE_SYN_ACK &&
              segment->seq == TCP_INITIAL_SEQUENCE &&
              segment->ack == sockets[fd].sendNext) {
             sockets[fd].hasOutstanding = FALSE;
@@ -663,7 +669,7 @@ implementation {
       }
 
       if (sockets[fd].state == SYN_RCVD) {
-         if ((segment->flags & TCP_FLAG_ACK) &&
+         if (segment->kindLength == TCP_CODE_ACK &&
              segment->ack == sockets[fd].sendNext &&
              segment->seq == sockets[fd].rcvNext) {
             sockets[fd].hasOutstanding = FALSE;
@@ -681,8 +687,7 @@ implementation {
       }
 
       if (sockets[fd].state == ESTABLISHED &&
-          (segment->flags & (TCP_FLAG_SYN | TCP_FLAG_ACK)) ==
-             (TCP_FLAG_SYN | TCP_FLAG_ACK) &&
+          segment->kindLength == TCP_CODE_SYN_ACK &&
           segment->ack == TCP_INITIAL_SEQUENCE + 1 &&
           segment->seq == sockets[fd].remoteInitialSequence) {
          sendAck(fd);
@@ -690,10 +695,9 @@ implementation {
       }
 
       if (sockets[fd].state == ESTABLISHED &&
-          segment->flags == TCP_FLAG_SYN &&
+          segment->kindLength == TCP_CODE_SYN &&
           segment->seq == sockets[fd].remoteInitialSequence &&
-          sockets[fd].handshakeReply.flags ==
-             (TCP_FLAG_SYN | TCP_FLAG_ACK)) {
+          sockets[fd].handshakeReply.kindLength == TCP_CODE_SYN_ACK) {
          // The tuple already exists; replay the original SYN-ACK without allocating.
          uint8_t payload[PACKET_MAX_PAYLOAD_SIZE];
          memset(payload, 0, sizeof(payload));
@@ -703,7 +707,7 @@ implementation {
          return SUCCESS;
       }
 
-      if (segment->flags == TCP_FLAG_PROBE) {
+      if (segment->kindLength == TCP_CODE_PROBE) {
          if (sockets[fd].state == ESTABLISHED ||
              sockets[fd].state == FIN_WAIT_1 ||
              sockets[fd].state == FIN_WAIT_2 ||
@@ -719,14 +723,14 @@ implementation {
       processAck(fd, segment);
       if (!validSocket(fd)) return SUCCESS;
 
-      if (segment->dataLength > 0) {
+      if (dataLength > 0) {
          // Data packets also advertise the sender's latest receive window.
          sockets[fd].peerWindow = segment->window;
          receiveData(fd, segment);
          pumpData(fd);
       }
 
-      if (segment->flags & TCP_FLAG_FIN) {
+      if (segment->kindLength == TCP_CODE_FIN) {
          sockets[fd].peerWindow = segment->window;
          if (!sockets[fd].peerFinReceived &&
              segment->seq == sockets[fd].rcvNext) {
@@ -800,7 +804,7 @@ implementation {
                } else {
                   sockets[fd].retries++;
                   sockets[fd].elapsedSeconds = 0;
-                  sendSegment(fd, TCP_FLAG_PROBE, sockets[fd].sendNext,
+                  sendSegment(fd, TCP_CODE_PROBE, sockets[fd].sendNext,
                               sockets[fd].rcvNext, NULL, 0, FALSE);
                }
             }

@@ -27,8 +27,8 @@ implementation {
       if (len != sizeof(pack)) return msg;
 
       received = (pack *)payload;
-      if ((received->protocol == PROTOCOL_PING ||
-           received->protocol == PROTOCOL_PINGREPLY) &&
+      if ((PACK_PROTOCOL(received) == PROTOCOL_PING ||
+           PACK_PROTOCOL(received) == PROTOCOL_PINGREPLY) &&
           call AMPacket.destination(msg) == AM_BROADCAST_ADDR) {
          call Flooding.receive(received);
       }

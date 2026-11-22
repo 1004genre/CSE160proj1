@@ -5,7 +5,7 @@ enum {
    DV_INFINITY = 16,
    DV_QUALITY_INFINITY = 255,
    DV_DESTINATIONS = 256,
-   DV_ENTRIES_PER_PACKET = 9,
+   DV_ENTRIES_PER_PACKET = 10,
    DV_EXPIRE_MS = 300000,
    DV_WITHDRAW_MS = 1200000,
    DV_STAGE_MS = 250
@@ -156,7 +156,7 @@ implementation {
       uint8_t count, i;
       uint8_t localLinkCost;
       uint16_t infinity;
-      if (len != sizeof(pack) || adv->protocol != PROTOCOL_DV) return msg;
+      if (len != sizeof(pack) || PACK_PROTOCOL(adv) != PROTOCOL_DV) return msg;
       sender = call AMPacket.source(msg);
       if (sender >= DV_DESTINATIONS || !call Neighbors.isNeighbor(sender) ||
           adv->dest != TOS_NODE_ID) return msg;
@@ -246,8 +246,7 @@ implementation {
       adv.dest = neighbor;
       adv.src = TOS_NODE_ID;
       adv.seq = (uint16_t)(destinationCursor / DV_ENTRIES_PER_PACKET);
-      adv.TTL = 1;
-      adv.protocol = PROTOCOL_DV;
+      adv.ttlProtocol = (1 << 4) | PROTOCOL_DV;
       memset(adv.payload, 0, PACKET_MAX_PAYLOAD_SIZE);
       for (scanned = destinationCursor; scanned < DV_DESTINATIONS &&
            count < DV_ENTRIES_PER_PACKET; scanned++) {
