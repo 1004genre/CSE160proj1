@@ -219,6 +219,7 @@ implementation {
 
          for (i = 0; i < requestedTransfer; i++) data[i] = i & 0xff;
          accepted = call Transport.write(fd, data, requestedTransfer);
+         // This count is local queue acceptance; peer ACKs are logged by TransportP.
          dbg(TRANSPORT_CHANNEL,
              "Node %d TCP client established; queued %d/%d bytes\n",
              TOS_NODE_ID, accepted, requestedTransfer);
@@ -255,6 +256,7 @@ implementation {
 
       if (fd != serverConnection) return;
       amount = call Transport.read(fd, data, sizeof(data));
+      // A read here means the test application consumed the delivered bytes.
       for (i = 0; i < amount; i++) {
          if (data[i] != ((serverBytesReceived + i) & 0xff)) valid = FALSE;
       }

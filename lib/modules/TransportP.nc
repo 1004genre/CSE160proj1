@@ -104,6 +104,7 @@ implementation {
           sockets[fd].state != TIME_WAIT || !sockets[fd].timeWaitExpired) {
          return;
       }
+      // connectionClosed means both FIN acknowledgment and local consumption completed.
       signal Transport.connectionClosed(fd);
       clearSocket(fd);
    }
@@ -240,6 +241,7 @@ implementation {
          expected = sockets[fd].lastSegment.seq +
                     sockets[fd].lastSegment.dataLength;
          if (segment->ack == expected) {
+            // Advance the peer-acknowledged count only after its cumulative ACK.
             sockets[fd].sendUna = segment->ack;
             sockets[fd].sendAcked +=
                sockets[fd].lastSegment.dataLength;
@@ -381,6 +383,7 @@ implementation {
           sockets[fd].state != ESTABLISHED || sockets[fd].closeRequested) {
          return 0;
       }
+      // Return only the bytes copied into this connection's local send buffer.
       available = SOCKET_BUFFER_SIZE - sockets[fd].sendLength;
       accepted = bufflen < available ? bufflen : available;
       if (accepted > 0) {
@@ -636,7 +639,8 @@ implementation {
                   dbg(TRANSPORT_CHANNEL,
                       "Node %d TCP fd %d retry limit exhausted\n",
                       TOS_NODE_ID, fd);
-                  reportFailure(fd, 1);
+                  // Report failure before cleanup; this path never signals graceful close.
+                  reportFailure(fd, TCP_FAILURE_RETRY_LIMIT);
                } else {
                   sockets[fd].retries++;
                   sockets[fd].elapsedSeconds = 0;

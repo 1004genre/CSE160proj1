@@ -13,10 +13,11 @@ enum {
    TCP_FLAG_ACK = 2,
    TCP_FLAG_DATA = 4,
    TCP_FLAG_FIN = 8,
-   TCP_RTO_SECONDS = 3,
-   TCP_MAX_RETRIES = 5,
+   TCP_RTO_SECONDS = 3, // Wait three seconds before retrying an outstanding segment.
+   TCP_MAX_RETRIES = 5, // Fail after five retries plus one final timeout interval.
    // 18s retains tuples for the 3s initial RTO and all five 3s retries.
    TCP_TIME_WAIT_SECONDS = TCP_RTO_SECONDS * (TCP_MAX_RETRIES + 1),
+   TCP_FAILURE_RETRY_LIMIT = 1,
    TCP_TIMER_INTERVAL_MS = 1000
 };
 

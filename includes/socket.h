@@ -50,11 +50,13 @@ typedef struct socket_store_t{
     uint16_t remoteInitialSequence;
     socket_t pendingChild;
     uint8_t sendBuff[SOCKET_BUFFER_SIZE];
+    // sendLength counts bytes accepted locally; sendAcked counts peer transport ACKs.
     uint16_t sendLength;
     uint16_t sendAcked;
     uint16_t sendNext;
     uint16_t sendUna;
     uint8_t rcvdBuff[SOCKET_BUFFER_SIZE];
+    // rcvLength is received data not yet consumed by the local test application.
     uint16_t rcvLength;
     uint16_t rcvNext;
     tcp_segment_t lastSegment;
