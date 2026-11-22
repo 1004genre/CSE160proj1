@@ -19,6 +19,8 @@ module Project3Node {
    provides interface TransportNetwork;
 }
 implementation {
+   enum { MAX_TEST_TRANSFER_BYTES = 1024 };
+
    uint16_t nextSequenceNumber = 0;
    socket_t serverSocket = SOCKET_NONE;
    socket_t serverConnection = SOCKET_NONE;
@@ -27,12 +29,42 @@ implementation {
    uint8_t clientSourcePort = 0;
    uint8_t clientDestinationPort = 0;
    uint16_t requestedTransfer = 0;
+   uint16_t clientBytesQueued = 0;
+   bool clientClosePending = FALSE;
    uint16_t serverBytesReceived = 0;
 
    void makePack(pack *p, uint16_t src, uint16_t dest, uint8_t ttl,
                  uint8_t protocol, uint16_t seq, const void *payload);
    bool sendRouted(pack *p);
    void processRouted(pack *p);
+
+   void queueClientData(socket_t fd) {
+      uint8_t data[SOCKET_BUFFER_SIZE];
+      uint16_t remaining;
+      uint16_t offered;
+      uint16_t accepted;
+      uint16_t i;
+
+      if (fd != clientSocket || clientBytesQueued >= requestedTransfer) return;
+      remaining = requestedTransfer - clientBytesQueued;
+      offered = remaining > SOCKET_BUFFER_SIZE ? SOCKET_BUFFER_SIZE : remaining;
+      for (i = 0; i < offered; i++) {
+         data[i] = (clientBytesQueued + i) & 0xff;
+      }
+      accepted = call Transport.write(fd, data, offered);
+      clientBytesQueued += accepted;
+      // The application retries only the unaccepted suffix when sendReady fires.
+      dbg(TRANSPORT_CHANNEL,
+          "Node %d TCP client locally queued %d/%d bytes\n",
+          TOS_NODE_ID, clientBytesQueued, requestedTransfer);
+      if (clientBytesQueued == requestedTransfer && clientClosePending) {
+         clientClosePending = FALSE;
+         call Transport.close(fd);
+         dbg(TRANSPORT_CHANNEL,
+             "Node %d TCP client close requested after queue acceptance\n",
+             TOS_NODE_ID);
+      }
+   }
 
    event void Boot.booted() {
       call AMControl.start();
@@ -142,7 +174,7 @@ implementation {
 
       if (clientAddress != TOS_NODE_ID || serverAddress == TOS_NODE_ID ||
           sourcePort == 0 || destinationPort == 0 ||
-          transferBytes == 0 || transferBytes > SOCKET_BUFFER_SIZE) {
+          transferBytes == 0 || transferBytes > MAX_TEST_TRANSFER_BYTES) {
          dbg(TRANSPORT_CHANNEL,
              "Node %d rejected invalid TCP client command\n", TOS_NODE_ID);
          return;
@@ -176,6 +208,8 @@ implementation {
       clientSourcePort = sourcePort;
       clientDestinationPort = destinationPort;
       requestedTransfer = transferBytes;
+      clientBytesQueued = 0;
+      clientClosePending = FALSE;
       dbg(TRANSPORT_CHANNEL,
           "Node %d TCP test client connecting to %d:%d for %d bytes\n",
           TOS_NODE_ID, serverAddress, destinationPort, transferBytes);
@@ -200,6 +234,13 @@ implementation {
              TOS_NODE_ID);
          return;
       }
+      if (clientBytesQueued < requestedTransfer) {
+         clientClosePending = TRUE;
+         dbg(TRANSPORT_CHANNEL,
+             "Node %d TCP client close requested; deferring until bytes are queued\n",
+             TOS_NODE_ID);
+         return;
+      }
       if (call Transport.close(clientSocket) != SUCCESS) {
          dbg(TRANSPORT_CHANNEL,
              "Node %d could not close TCP client %d:%d -> %d:%d\n",
@@ -213,23 +254,9 @@ implementation {
 
    event void Transport.connectionEstablished(socket_t fd) {
       if (fd == clientSocket) {
-         uint8_t data[SOCKET_BUFFER_SIZE];
-         uint16_t i;
-         uint16_t accepted;
-
-         for (i = 0; i < requestedTransfer; i++) data[i] = i & 0xff;
-         accepted = call Transport.write(fd, data, requestedTransfer);
-         // This count is local queue acceptance; peer ACKs are logged by TransportP.
          dbg(TRANSPORT_CHANNEL,
-             "Node %d TCP client established; queued %d/%d bytes\n",
-             TOS_NODE_ID, accepted, requestedTransfer);
-         if (accepted != requestedTransfer) {
-            dbg(TRANSPORT_CHANNEL,
-                "Node %d TCP client could not queue full transfer\n",
-                TOS_NODE_ID);
-            call Transport.release(fd);
-            clientSocket = SOCKET_NONE;
-         }
+             "Node %d TCP client established\n", TOS_NODE_ID);
+         queueClientData(fd);
       } else {
          socket_t accepted;
          if (serverSocket == SOCKET_NONE) return;
@@ -246,6 +273,10 @@ implementation {
              "Node %d TCP server accepted connection fd %d\n",
              TOS_NODE_ID, fd);
       }
+   }
+
+   event void Transport.sendReady(socket_t fd) {
+      if (fd == clientSocket) queueClientData(fd);
    }
 
    event void Transport.dataReceived(socket_t fd) {
@@ -277,6 +308,7 @@ implementation {
          dbg(TRANSPORT_CHANNEL,
              "Node %d TCP client connection closed\n", TOS_NODE_ID);
          clientSocket = SOCKET_NONE;
+         clientClosePending = FALSE;
       }
    }
 
@@ -284,13 +316,17 @@ implementation {
       dbg(TRANSPORT_CHANNEL,
           "Node %d TCP connection fd %d failed, reason %d\n",
           TOS_NODE_ID, fd, reason);
-      if (fd == clientSocket) clientSocket = SOCKET_NONE;
+      if (fd == clientSocket) {
+         clientSocket = SOCKET_NONE;
+         clientClosePending = FALSE;
+      }
       if (fd == serverConnection) serverConnection = SOCKET_NONE;
    }
 
    command error_t TransportNetwork.send(uint16_t destination,
                                          const uint8_t *payload) {
       pack p;
+      // Each transport transmission, including a retry, gets a fresh network packet ID.
       makePack(&p, TOS_NODE_ID, destination, MAX_TTL, PROTOCOL_TCP,
                nextSequenceNumber++, payload);
       if (destination == TOS_NODE_ID) {

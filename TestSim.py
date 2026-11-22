@@ -140,8 +140,8 @@ class TestSim:
                    destinationPort, transferBytes):
         if not 1 <= sourcePort <= 255 or not 1 <= destinationPort <= 255:
             raise ValueError('TCP ports must be between 1 and 255')
-        if not 1 <= transferBytes <= 128:
-            raise ValueError('Mid-review transfer must be between 1 and 128 bytes')
+        if not 1 <= transferBytes <= 1024:
+            raise ValueError('Project 3 transfer must be between 1 and 1024 bytes')
         payload = (self._encode16(clientAddress) +
                    self._encode16(serverAddress) +
                    chr(sourcePort) + chr(destinationPort) +

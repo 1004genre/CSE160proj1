@@ -138,6 +138,7 @@ implementation {
    }
 
    uint8_t receiveWindow(socket_store_t *connection) {
+      if (connection->rcvLength >= SOCKET_BUFFER_SIZE) return 0;
       return SOCKET_BUFFER_SIZE - connection->rcvLength;
    }
 
@@ -148,7 +149,8 @@ implementation {
       uint8_t payload[PACKET_MAX_PAYLOAD_SIZE];
       error_t result;
 
-      if (!validSocket(fd) || length > TCP_DATA_SIZE) return FAIL;
+      if (!validSocket(fd) || length > TCP_DATA_SIZE ||
+          (length > 0 && data == NULL)) return FAIL;
 
       memset(&segment, 0, sizeof(segment));
       segment.srcPort = sockets[fd].localPort;
@@ -180,8 +182,12 @@ implementation {
    void sendDataRange(socket_t fd, uint16_t sequence, uint16_t offset,
                       uint16_t length) {
       uint8_t chunk;
+      if (!validSocket(fd) || sockets[fd].sendLength > SOCKET_BUFFER_SIZE ||
+          offset > sockets[fd].sendLength ||
+          length > sockets[fd].sendLength - offset) return;
       while (length > 0) {
          chunk = length > TCP_DATA_SIZE ? TCP_DATA_SIZE : length;
+         // Replaying a retained range does not advance sequence or app byte counts.
          sendSegment(fd, TCP_FLAG_DATA, sequence, 0,
                      &sockets[fd].sendBuff[offset], chunk, FALSE);
          sequence += chunk;
@@ -198,7 +204,7 @@ implementation {
                 sizeof(tcp_segment_t));
          call Network.send(sockets[fd].remoteAddr, payload);
       } else {
-         // Go-back-N resends retained bytes with their original sequence ranges.
+         // Receiver discards gaps; Go-back-N replays all retained bytes in order.
          sendDataRange(fd, sockets[fd].sendUna, 0,
                        sockets[fd].sendNext - sockets[fd].sendUna);
       }
@@ -234,7 +240,10 @@ implementation {
           sockets[fd].controlOutstanding) return;
 
       // The buffer prefix is in flight; only its suffix is eligible for sending.
+      if (sockets[fd].sendLength > SOCKET_BUFFER_SIZE ||
+          sockets[fd].sendNext < sockets[fd].sendUna) return;
       outstanding = sockets[fd].sendNext - sockets[fd].sendUna;
+      if (outstanding > sockets[fd].sendLength) return;
       window = sockets[fd].senderWindow < sockets[fd].peerWindow ?
                sockets[fd].senderWindow : sockets[fd].peerWindow;
       unsent = sockets[fd].sendLength > outstanding ?
@@ -243,6 +252,7 @@ implementation {
          allowance = window - outstanding;
          length = unsent > TCP_DATA_SIZE ? TCP_DATA_SIZE : unsent;
          if (length > allowance) length = allowance;
+         if (outstanding >= SOCKET_BUFFER_SIZE || length == 0) return;
          if (!sockets[fd].hasOutstanding) {
             sockets[fd].hasOutstanding = TRUE;
             sockets[fd].controlOutstanding = FALSE;
@@ -278,6 +288,8 @@ implementation {
       uint16_t outstanding;
 
       if (!(segment->flags & TCP_FLAG_ACK)) return;
+      if (sockets[fd].sendNext < sockets[fd].sendUna ||
+          sockets[fd].sendLength > SOCKET_BUFFER_SIZE) return;
       highestSent = sockets[fd].sendNext;
       if (sockets[fd].controlOutstanding &&
           (sockets[fd].lastSegment.flags & TCP_FLAG_FIN)) {
@@ -331,6 +343,8 @@ implementation {
              "Node %d TCP fd %d data acknowledged %d/%d\n",
              TOS_NODE_ID, fd, sockets[fd].sendAcked,
              sockets[fd].sendTotal);
+         // Notify the app that cumulative progress freed local send-buffer space.
+         signal Transport.sendReady(fd);
       }
       pumpData(fd); // An ACK or valid window update may allow another segment.
    }
@@ -342,6 +356,10 @@ implementation {
          dbg(TRANSPORT_CHANNEL,
              "Node %d TCP fd %d dropped malformed data length %d\n",
              TOS_NODE_ID, fd, segment->dataLength);
+         return;
+      }
+
+      if (sockets[fd].rcvLength > SOCKET_BUFFER_SIZE) {
          sendAck(fd);
          return;
       }
@@ -351,6 +369,7 @@ implementation {
          return;
       }
 
+      // Accept only the next expected byte; discard gaps and duplicates, then ACK the gap edge.
       if (segment->seq == sockets[fd].rcvNext &&
           segment->dataLength <= SOCKET_BUFFER_SIZE - sockets[fd].rcvLength) {
          memcpy(&sockets[fd].rcvdBuff[sockets[fd].rcvLength],
@@ -445,6 +464,7 @@ implementation {
           sockets[fd].state != ESTABLISHED || sockets[fd].closeRequested) {
          return 0;
       }
+      if (sockets[fd].sendLength > SOCKET_BUFFER_SIZE) return 0;
       // Return only the bytes copied into this connection's local send buffer.
       available = SOCKET_BUFFER_SIZE - sockets[fd].sendLength;
       accepted = bufflen < available ? bufflen : available;
@@ -463,7 +483,8 @@ implementation {
    command uint16_t Transport.read(socket_t fd, uint8_t *buff,
                                    uint16_t bufflen) {
       uint16_t amount;
-      if (!validSocket(fd) || buff == NULL) return 0;
+      if (!validSocket(fd) || buff == NULL ||
+          sockets[fd].rcvLength > SOCKET_BUFFER_SIZE) return 0;
 
       amount = bufflen < sockets[fd].rcvLength ?
                bufflen : sockets[fd].rcvLength;

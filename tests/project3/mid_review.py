@@ -25,7 +25,8 @@ def main():
         sim.runForSeconds(30)
         sim.testServer(3, 80)
         sim.runForSeconds(1)
-        sim.testClient(1, 3, 81, 80, 32)
+        # Exceed the 128-byte local buffer to exercise partial writes and resumption.
+        sim.testClient(1, 3, 81, 80, 256)
         sim.runForSeconds(5)
         sim.closeTestClient(1, 3, 81, 80)
         # TIME_WAIT lasts 18 seconds, covering the full FIN retry horizon.
@@ -43,10 +44,10 @@ def main():
         "state SYN_RCVD -> ESTABLISHED",
         "outstanding 24/48",
         "pattern valid",
-        "total 32",
+        "total 256",
         "TCP client close requested",
         "TCP client connection closed",
-        "TCP server connection closed after 32 bytes"
+        "TCP server connection closed after 256 bytes"
     )
     missing = [marker for marker in expected if marker not in log]
     if missing:
@@ -62,7 +63,7 @@ def main():
     print "Node 3: SYN_RCVD -> ESTABLISHED"
     print ""
     print "Reliable data transfer:"
-    print "Node 1 sent 32 bytes using stop-and-wait"
+    print "Node 1 sent 256 bytes using the fixed sliding window"
     print "Node 3 verified the byte pattern and returned cumulative ACKs"
     print ""
     print "Orderly teardown:"
@@ -74,7 +75,7 @@ def main():
     print "Node 3 closes and releases its connection"
     print "Node 1 releases its record after TIME_WAIT"
     print ""
-    print "Project 3 mid-review passed: setup, 32-byte transfer, and orderly close."
+    print "Project 3 mid-review passed: setup, 256-byte transfer, and orderly close."
     print "Detailed TOSSIM output: {0}".format(log_path)
 
 

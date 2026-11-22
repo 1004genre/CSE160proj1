@@ -17,6 +17,7 @@
 
 interface Transport{
    event void connectionEstablished(socket_t fd);
+   event void sendReady(socket_t fd);
    event void dataReceived(socket_t fd);
    event void connectionClosed(socket_t fd);
    event void connectionFailed(socket_t fd, uint8_t reason);
@@ -71,6 +72,7 @@ interface Transport{
     * @Side For your project, only client side. This could be both though.
     * @return uint16_t - return the amount of data you are able to write
     *    from the pass buffer. This may be shorter then bufflen
+    * Retain the unaccepted suffix and offer it again after buffer space opens.
     */
    command uint16_t write(socket_t fd, uint8_t *buff, uint16_t bufflen);
 

@@ -248,8 +248,9 @@ python2 tests/project3/mid_review.py
 ```
 
 The test starts a listener on node 3, connects from node 1 over
-`topo/p3_midreview.topo`, transfers the byte pattern `0..31` with a fixed
-four-segment sender window, then performs an orderly close. It checks that
+`topo/p3_midreview.topo`, transfers 256 bytes with a fixed four-segment sender
+window, then performs an orderly close. The transfer exceeds the 128-byte
+local send buffer, exercising partial writes and resumption. It checks that
 multiple data segments are outstanding, verifies the bytes, and checks cleanup.
 Detailed output is saved to `logs/project3-mid-review.log`.
 
