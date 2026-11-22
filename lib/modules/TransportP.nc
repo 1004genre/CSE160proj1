@@ -363,6 +363,11 @@ implementation {
          sendAck(fd);
          return;
       }
+      if (sockets[fd].rcvTotal > TCP_MAX_TRANSFER_BYTES ||
+          segment->dataLength > TCP_MAX_TRANSFER_BYTES - sockets[fd].rcvTotal) {
+         sendAck(fd);
+         return;
+      }
 
       if (sockets[fd].peerFinReceived) {
          sendAck(fd);
@@ -375,6 +380,7 @@ implementation {
          memcpy(&sockets[fd].rcvdBuff[sockets[fd].rcvLength],
                 segment->data, segment->dataLength);
          sockets[fd].rcvLength += segment->dataLength;
+         sockets[fd].rcvTotal += segment->dataLength;
          sockets[fd].rcvNext += segment->dataLength;
          dbg(TRANSPORT_CHANNEL,
              "Node %d TCP fd %d accepted data seq %d len %d next %d\n",
@@ -459,15 +465,19 @@ implementation {
                                     uint16_t bufflen) {
       uint16_t available;
       uint16_t accepted;
+      uint16_t transferRemaining;
 
       if (!validSocket(fd) || buff == NULL ||
           sockets[fd].state != ESTABLISHED || sockets[fd].closeRequested) {
          return 0;
       }
       if (sockets[fd].sendLength > SOCKET_BUFFER_SIZE) return 0;
+      if (sockets[fd].sendTotal >= TCP_MAX_TRANSFER_BYTES) return 0;
       // Return only the bytes copied into this connection's local send buffer.
       available = SOCKET_BUFFER_SIZE - sockets[fd].sendLength;
+      transferRemaining = TCP_MAX_TRANSFER_BYTES - sockets[fd].sendTotal;
       accepted = bufflen < available ? bufflen : available;
+      if (accepted > transferRemaining) accepted = transferRemaining;
       if (accepted > 0) {
          memcpy(&sockets[fd].sendBuff[sockets[fd].sendLength], buff, accepted);
          sockets[fd].sendLength += accepted;
@@ -545,6 +555,8 @@ implementation {
                           package->dest, segment->destPort);
       if (fd == SOCKET_NONE && (segment->flags & TCP_FLAG_SYN) &&
           !(segment->flags & TCP_FLAG_ACK)) {
+         // All nodes use ISN zero so plain integer comparisons remain no-wrap safe.
+         if (segment->seq != TCP_INITIAL_SEQUENCE) return FAIL;
          listener = findListener(package->dest, segment->destPort);
          if (listener == SOCKET_NONE) {
             dbg(TRANSPORT_CHANNEL,
@@ -604,6 +616,7 @@ implementation {
       if (sockets[fd].state == SYN_SENT) {
          if ((segment->flags & (TCP_FLAG_SYN | TCP_FLAG_ACK)) ==
                 (TCP_FLAG_SYN | TCP_FLAG_ACK) &&
+             segment->seq == TCP_INITIAL_SEQUENCE &&
              segment->ack == sockets[fd].sendNext) {
             sockets[fd].hasOutstanding = FALSE;
             sockets[fd].controlOutstanding = FALSE;

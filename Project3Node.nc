@@ -19,8 +19,6 @@ module Project3Node {
    provides interface TransportNetwork;
 }
 implementation {
-   enum { MAX_TEST_TRANSFER_BYTES = 1024 };
-
    uint16_t nextSequenceNumber = 0;
    socket_t serverSocket = SOCKET_NONE;
    socket_t serverConnection = SOCKET_NONE;
@@ -174,7 +172,7 @@ implementation {
 
       if (clientAddress != TOS_NODE_ID || serverAddress == TOS_NODE_ID ||
           sourcePort == 0 || destinationPort == 0 ||
-          transferBytes == 0 || transferBytes > MAX_TEST_TRANSFER_BYTES) {
+          transferBytes == 0 || transferBytes > TCP_MAX_TRANSFER_BYTES) {
          dbg(TRANSPORT_CHANNEL,
              "Node %d rejected invalid TCP client command\n", TOS_NODE_ID);
          return;

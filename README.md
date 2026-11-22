@@ -257,4 +257,6 @@ Detailed output is saved to `logs/project3-mid-review.log`.
 Project 3 uses the 29-byte course packet budget: an 8-byte network header and
 21-byte payload. Its 9-byte transport header leaves 12 data bytes per segment.
 The sender window is 48 bytes and is limited by the peer's advertised receive
-window. See `PROJECT3_DESIGN.md` for remaining validation work.
+window. Each connection is capped at 1,024 data bytes so its 16-bit transport
+sequence numbers never wrap; SYN, data, and FIN all fit in that range. See
+`PROJECT3_DESIGN.md` for remaining validation work.

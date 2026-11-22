@@ -56,8 +56,12 @@ and long-transfer tests remain separate validation stages.
   header plus a 21-byte transport payload. The 9-byte transport header leaves
   12 bytes for data. `TOSH_DATA_LENGTH` is set to 29 so the configured TinyOS
   payload matches that budget; no extra bytes are added for AM fields.
-- Start with a documented no-wrap sequence range for required tests. Keep
-  network packet IDs distinct from transport byte sequence numbers.
+- Transport sequence numbers are 16-bit and deliberately do not wrap. Each
+  direction starts with SYN sequence 0; up to 1,024 data bytes use sequences
+  1..1,024, FIN uses 1,025, and its cumulative ACK is 1,026. The API enforces
+  `TCP_MAX_TRANSFER_BYTES=1024` on both send and receive. All required tests
+  must stay at or below this per-direction cap. Network packet IDs remain
+  separate from transport byte sequence numbers.
 - Maintain these invariants: acknowledged bytes never exceed sent bytes;
   consumed bytes never exceed received bytes; outstanding send bytes fit the
   sender buffer; receive occupancy never exceeds 128 bytes.

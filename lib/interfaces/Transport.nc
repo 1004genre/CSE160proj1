@@ -73,6 +73,7 @@ interface Transport{
     * @return uint16_t - return the amount of data you are able to write
     *    from the pass buffer. This may be shorter then bufflen
     * Retain the unaccepted suffix and offer it again after buffer space opens.
+    * Each connection accepts at most TCP_MAX_TRANSFER_BYTES total to avoid seq wrap.
     */
    command uint16_t write(socket_t fd, uint8_t *buff, uint16_t bufflen);
 

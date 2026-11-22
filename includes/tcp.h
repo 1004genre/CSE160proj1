@@ -9,6 +9,8 @@ enum {
    TCP_DATA_SIZE = PACKET_MAX_PAYLOAD_SIZE - TCP_HEADER_SIZE,
    // Both peers start at this ISN; each socket tracks its own next sequence value.
    TCP_INITIAL_SEQUENCE = 0,
+   // No-wrap cap: SYN + 1,024 data bytes + FIN ends at sequence 1,026.
+   TCP_MAX_TRANSFER_BYTES = 1024,
    TCP_FLAG_SYN = 1,
    TCP_FLAG_ACK = 2,
    TCP_FLAG_DATA = 4,

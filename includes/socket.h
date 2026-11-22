@@ -62,6 +62,7 @@ typedef struct socket_store_t{
     uint8_t rcvdBuff[SOCKET_BUFFER_SIZE];
     // rcvLength is received data not yet consumed by the local test application.
     uint16_t rcvLength;
+    uint16_t rcvTotal;
     uint16_t rcvNext;
     tcp_segment_t lastSegment;
     tcp_segment_t handshakeReply;
