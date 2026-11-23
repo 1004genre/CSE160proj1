@@ -79,10 +79,9 @@ def main():
         log)
     max_outstanding = max_value(
         r"event=DATA_TX .*? outstanding=(\d+)", log)
-    # ACK window advertisements reveal occupancy while unread bytes are buffered.
-    receive_windows = [int(value) for value in re.findall(
-        r"node=3 .*?event=ACK_TX .*? wnd=(\d+)", log)]
-    max_buffered = 128 - min(receive_windows) if receive_windows else 0
+    # The receiver logs occupancy at each accepted in-order segment.
+    max_buffered = max_value(
+        r"node=3 .*?event=DATA_ACCEPT .*? buffered=(\d+)", log)
     output.close()
 
     if server is None or [int(value) for value in server.groups()] != [args.length, 0]:
@@ -94,8 +93,8 @@ def main():
         raise RuntimeError("Sliding-window check failed at {0} bytes".format(max_outstanding))
     if max_buffered > 128:
         raise RuntimeError("Receiver exceeded its 128-byte buffer")
-    if not receive_windows:
-        raise RuntimeError("No receiver window advertisements were logged")
+    if max_buffered == 0:
+        raise RuntimeError("No accepted receiver data was logged")
 
     print "PASS: {0} bytes, zero mismatches, max outstanding {1}, max receive occupancy {2}".format(
         args.length, max_outstanding, max_buffered)
