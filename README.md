@@ -280,6 +280,21 @@ python2 tests/project3/long_transfer.py --noise some_noise.txt --seed 17
 This uses the same byte, buffer, sliding-window, and orderly-close checks while
 `TestSim` loads `noise/some_noise.txt`.
 
+The extra-credit sender uses a per-connection Tahoe-style congestion window.
+Check slow start, congestion avoidance, the 56-byte cap, and timeout backoff
+with:
+
+```sh
+python2 tests/project3/congestion_control.py
+```
+
+The baseline run grows without loss; the timeout run drops the first data
+segment. Both runs require exact 1,024-byte delivery and successful close, and
+the timeout run checks that `cwnd` falls to one segment before recovery. Use
+`--case baseline` or `--case timeout` to run one scenario; `--seed`, `--topology`,
+and `--noise` select the simulation inputs. Logs are saved separately under
+`logs/project3-congestion-*.log`.
+
 `python2 run.py` runs the 300-byte Project 3 example. Its `Project3Run` wrapper
 also exposes `cmdTestServer(serverAddress, listenPort)`,
 `cmdTestClient(clientAddress, serverAddress, srcPort, destPort, transferBytes)`,

@@ -79,6 +79,8 @@ case. The other test drivers are separate reproducible validation stages.
 - Maintain these invariants: acknowledged bytes never exceed sent bytes;
   consumed bytes never exceed received bytes; outstanding send bytes fit the
   sender buffer; receive occupancy never exceeds 128 bytes.
+- Every connected sender has separate congestion-control state: `cwnd`,
+  `ssthresh`, duplicate ACK count, and fractional additive-growth credit.
 
 ## State and timer policy
 
@@ -112,6 +114,22 @@ the same transport sequence range, and allocates a fresh network packet ID for
 each routed transmission. `Transport.write` reports locally accepted bytes;
 the application retries any unaccepted suffix after `sendReady` reports space.
 
+## Extra credit: congestion control
+
+Each sending direction uses Tahoe-style congestion control. The 14-byte MSS
+initializes `cwnd`; the initial `ssthresh` is 42 bytes. Each advancing ACK adds
+one MSS during slow start. At the threshold, congestion avoidance adds roughly
+`MSS^2 / cwnd` per newly acknowledged MSS and retains fractional growth credit.
+New data is limited by the minimum of the 56-byte configured sender cap, `cwnd`,
+and the peer's advertised receive window. Retransmissions stay governed by the
+fixed and peer windows so Go-Back-N can repair data sent before a loss response.
+
+Three duplicate ACKs trigger one fast retransmission of the oldest unacknowledged
+range. Fast retransmit and timeout recovery set `cwnd` to one MSS and reduce
+`ssthresh` to half the outstanding bytes, with a two-MSS minimum. Advancing ACKs
+clear duplicate-ACK recovery state. `Project3TGen` reports the phase, `cwnd`,
+`ssthresh`, outstanding bytes, and peer window for each connection.
+
 Transport encoding/decoding and data-capacity checks use the encoded segment
 size. Each pump or retransmit call submits at most two data packets through the
 existing queued `SimpleSend` service. A lower-layer queue failure leaves the
@@ -123,8 +141,9 @@ process each page independently without table reassembly.
 
 The advertised receive window is `128 - rcvLength`; acknowledged bytes remain
 counted until `Transport.read` consumes them. The sender limits outstanding
-bytes to the smaller of its 56-byte fixed window and the peer window relative
-to the cumulative ACK, so already outstanding bytes use part of that allowance.
+bytes to the minimum of its 56-byte fixed window, congestion window, and peer
+window relative to the cumulative ACK, so already outstanding bytes use part
+of that allowance.
 It sends a shorter segment when only a partial window remains. At zero window,
 it stops new data and sends a non-sequenced window probe every 3 seconds. A
 valid probe response with window zero keeps the connection alive; retry failure
@@ -178,6 +197,7 @@ on their own components while transport retries wait.
 | 5. Zero-window validation (driver added) | 128-byte receive occupancy; test consumer pauses/resumes; probe/recovery for lost reopening update | `tests/project3/mid_review.py` checks zero-window recovery and receiver occupancy |
 | 6. Independent connections and failure (drivers added) | Two simultaneous connection records; fair bounded work; unavailable-listener and retry-exhaustion cleanup | `tests/project3/two_connections.py` and `failure_cleanup.py` cover paused-connection isolation and bounded failure/tuple reuse |
 | 7. Validation and submission docs (in progress) | Deterministic drop hooks, seven loss-recovery cases, noisy run, reproducible scripts, README results, one-page design PDF, discussion answers | Drivers and run commands are documented; simulator execution and the one-page PDF remain outstanding |
+| 8. Congestion-control extra credit (implemented) | Per-direction Tahoe slow start, congestion avoidance, fast retransmit, and timeout backoff | `tests/project3/congestion_control.py` checks growth, cap, timeout response, byte-exact delivery, and close |
 
 ## Full-project completion criteria
 
@@ -226,8 +246,9 @@ byte contents and final connection-table state in every case:
    while one is paused or forced to time out; verify the other makes progress,
    listeners remain usable, and closed/failed records are reclaimed.
 
-Do not begin optional congestion-window/slow-start work until all required
-reliability, sliding-window, flow-control, and cleanup behavior is validated.
+Congestion control is included as an extra-credit extension. Its seeded
+baseline-growth and timeout-recovery checks are in
+`tests/project3/congestion_control.py`.
 
 ## Mid-review demo procedure
 
