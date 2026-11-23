@@ -12,8 +12,11 @@
   outstanding segments and partial-write resumption in a byte-exact 256-byte
   transfer, pauses the consumer through a zero window, drops one reopening
   update, and checks probe recovery and close.
-  Zero-window recovery with a dropped reopening update is covered; concurrent
-  active connections and broader deterministic loss cases still need validation.
+- `tests/project3/long_transfer.py`, `loss_recovery.py`,
+  `two_connections.py`, and `failure_cleanup.py` provide the longer-transfer,
+  controlled-loss, concurrent-connection, and bounded-failure scenarios.
+- These added scenarios still require execution in the TinyOS/TOSSIM Docker
+  environment; source checks alone do not confirm simulator behavior.
 
 ## Mid-review target
 
@@ -33,7 +36,7 @@ Demonstrate on a stable three-node line (1-2-3), after routes converge:
    ranges, and advertised-window behavior.
 
 The mid-review demonstrates a fixed sliding window and one zero-window recovery
-case. Broader loss scenarios and long transfers remain separate validation stages.
+case. The other test drivers are separate reproducible validation stages.
 
 ## Proposed architecture and invariants
 
@@ -94,8 +97,8 @@ case. Broader loss scenarios and long transfers remain separate validation stage
 The mid-review implementation uses a fixed 3-second retransmission timeout,
 five retransmissions, and explicit failure reporting. It was exercised on the
 two-hop demo route; calibrate it again for longer routes and loss scenarios.
-Duplicate SYN and data packets are handled idempotently; expand tests for
-duplicate FIN and lost final ACK during the full-project stages. Both endpoints
+Duplicate SYN and data packets are handled idempotently; the loss-recovery driver
+also exercises duplicate FIN handling and a lost final ACK. Both endpoints
 retain the tuple for 18 seconds: the 3-second initial RTO plus five retry
 intervals. This covers the full FIN retry horizon and lets the client
 acknowledge a retransmitted FIN if the first final ACK is lost.
@@ -172,9 +175,9 @@ on their own components while transport retries wait.
 | 2. Fixed sliding-window data (implemented) | Retained 128-byte send buffer, 14-byte segments, four-segment sender window, advertised peer-window limit, in-order receiver, cumulative ACK, go-back-N retry | Demo confirms 28 bytes outstanding, resumes after partial writes, and transfers 256 bytes byte-exactly over 1-2-3 |
 | 3. Orderly close (implemented) | Drain data before FIN; peer FIN/final ACK; bounded retry and TIME_WAIT cleanup | Mid-review script completes setup, transfer, and teardown with state logs |
 | 4. Longer sliding-window validation (driver added) | Transfer at least 1,024 bytes; validate partial ACK advancement and sequence-range retransmission | `tests/project3/long_transfer.py` checks byte-exact delivery, multiple outstanding segments, a short final segment, and bounded buffers |
-| 5. Zero-window validation | 128-byte receive occupancy; test consumer pauses/resumes; probe/recovery for lost reopening update | Sender stops at zero window, resumes, and receiver never overflows |
-| 6. Independent connections and failure | Two simultaneous connection records; fair bounded work; unavailable-listener and retry-exhaustion cleanup | `tests/project3/two_connections.py` pauses one connection while a second completes; `tests/project3/failure_cleanup.py` verifies explicit bounded failure and tuple reuse |
-| 7. Validation and submission docs | Deterministic drop hooks, seven loss-recovery cases, noisy run, reproducible scripts, README results, one-page design PDF, discussion answers | `tests/project3/loss_recovery.py` verifies seven control/data losses; README's seeded noisy long-transfer command exercises the routed path |
+| 5. Zero-window validation (driver added) | 128-byte receive occupancy; test consumer pauses/resumes; probe/recovery for lost reopening update | `tests/project3/mid_review.py` checks zero-window recovery and receiver occupancy |
+| 6. Independent connections and failure (drivers added) | Two simultaneous connection records; fair bounded work; unavailable-listener and retry-exhaustion cleanup | `tests/project3/two_connections.py` and `failure_cleanup.py` cover paused-connection isolation and bounded failure/tuple reuse |
+| 7. Validation and submission docs (in progress) | Deterministic drop hooks, seven loss-recovery cases, noisy run, reproducible scripts, README results, one-page design PDF, discussion answers | Drivers and run commands are documented; simulator execution and the one-page PDF remain outstanding |
 
 ## Full-project completion criteria
 
