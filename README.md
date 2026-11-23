@@ -288,12 +288,12 @@ with:
 python2 tests/project3/congestion_control.py
 ```
 
-The baseline run grows without loss; the timeout run drops the first data
-segment. Both runs require exact 1,024-byte delivery and successful close, and
-the timeout run checks that `cwnd` falls to one segment before recovery. Use
-`--case baseline` or `--case timeout` to run one scenario; `--seed`, `--topology`,
-and `--noise` select the simulation inputs. Logs are saved separately under
-`logs/project3-congestion-*.log`.
+One TOSSIM instance runs two sequential connections: the baseline grows without
+loss, then the timeout case drops its first data segment. Both require exact
+1,024-byte delivery and successful close; the timeout case checks that `cwnd`
+falls to one segment before recovery. Use `--case baseline` or `--case timeout`
+to run one scenario; `--seed`, `--topology`, and `--noise` select the simulation
+inputs. Logs are saved to `logs/project3-congestion.log`.
 
 `python2 run.py` runs the 300-byte Project 3 example. Its `Project3Run` wrapper
 also exposes `cmdTestServer(serverAddress, listenPort)`,
