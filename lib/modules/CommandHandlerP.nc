@@ -118,6 +118,15 @@ implementation{
                     readNetwork16(&buff[3]), buff[5]);
                 break;
 
+            case CMD_TEST_TRANSPORT_DROP:
+                dbg(COMMAND_CHANNEL, "Command Type: TCP test packet drop rule\n");
+                // Decode the fixed tuple, match field/value, and selected occurrence.
+                signal CommandHandler.setTransportDropRule(
+                    readNetwork16(buff), readNetwork16(&buff[2]),
+                    buff[4], buff[5], buff[6], buff[7],
+                    readNetwork16(&buff[8]), readNetwork16(&buff[10]));
+                break;
+
             default:
                 dbg(COMMAND_CHANNEL, "CMD_ERROR: \"%d\" does not match any known commands.\n", msg->id);
                 break;

@@ -67,6 +67,11 @@ implementation {
                                                 uint8_t listenPort,
                                                 uint16_t clientAddress,
                                                 uint8_t sourcePort) {}
+   // Project 1 does not configure transport packet loss rules.
+   event void CommandHandler.setTransportDropRule(
+      uint16_t sourceAddress, uint16_t destinationAddress,
+      uint8_t sourcePort, uint8_t destinationPort,
+      uint8_t kind, uint8_t field, uint16_t value, uint16_t occurrence) {}
    event void CommandHandler.setAppServer() {}
    event void CommandHandler.setAppClient() {}
 }

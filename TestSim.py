@@ -17,6 +17,10 @@ class TestSim:
     CMD_CLIENT_CLOSE = 10
     CMD_TEST_CONSUMER_PAUSE = 11
     CMD_TEST_CONSUMER_RESUME = 12
+    CMD_TEST_TRANSPORT_DROP = 13
+    TEST_DROP_ANY_DATA = 254
+    TEST_DROP_SEQUENCE = 0
+    TEST_DROP_ACKNOWLEDGMENT = 1
 
     COMMAND_CHANNEL = "command"
     GENERAL_CHANNEL = "general"
@@ -177,6 +181,26 @@ class TestSim:
         payload = (self._encode16(serverAddress) + chr(listenPort) +
                    self._encode16(clientAddress) + chr(sourcePort))
         self.sendCMD(self.CMD_TEST_CONSUMER_RESUME, serverAddress, payload)
+
+    # Configure one intermediate-node drop by connection tuple and sequence field.
+    def dropTransportPacket(self, nodeAddress, sourceAddress,
+                            destinationAddress, sourcePort, destinationPort,
+                            kind, field, value, occurrence=1):
+        if not 1 <= sourcePort <= 255 or not 1 <= destinationPort <= 255:
+            raise ValueError('TCP ports must be between 1 and 255')
+        if kind not in (0, 1, 2, 3, 4, self.TEST_DROP_ANY_DATA):
+            raise ValueError('Use a TCP control code or TEST_DROP_ANY_DATA')
+        if field not in (self.TEST_DROP_SEQUENCE,
+                         self.TEST_DROP_ACKNOWLEDGMENT):
+            raise ValueError('Drop field must be sequence or acknowledgment')
+        if not 1 <= occurrence <= 65535:
+            raise ValueError('Drop occurrence must be between 1 and 65535')
+        payload = (self._encode16(sourceAddress) +
+                   self._encode16(destinationAddress) +
+                   chr(sourcePort) + chr(destinationPort) + chr(kind) +
+                   chr(field) + self._encode16(value) +
+                   self._encode16(occurrence))
+        self.sendCMD(self.CMD_TEST_TRANSPORT_DROP, nodeAddress, payload)
 
     def _encode16(self, value):
         if not 0 <= value <= 65535:

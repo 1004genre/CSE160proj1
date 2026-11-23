@@ -136,6 +136,12 @@ handler only notifies, while a 500 ms timer resumes reads through
 then checks that a later probe recovers the window and logged receive occupancy
 never exceeds 128 bytes.
 
+The optional deterministic drop rule is armed by the test command dispatcher
+and runs at a selected forwarding node before ordinary delivery/forwarding. It
+matches the routed source/destination, transport ports, control/data kind, one
+sequence or ACK value, and a matching-packet occurrence; the one-shot hook is
+inactive in normal runs.
+
 The command wrapper in `run.py` targets server creation and receiver pause/resume
 at the server address, and client open/close at the client address. Pause and
 resume identify `(serverAddress, listenPort, clientAddress, sourcePort)`. Each

@@ -288,6 +288,14 @@ most two data segments per batch through `SimpleSend`, and advances its send
 cursor only when that queue accepts a packet. The DV sender separately queues
 complete destination-cost pairs in one timer-driven page at a time.
 
+For deterministic loss experiments, `TestSim.dropTransportPacket(node,
+source, destination, sourcePort, destinationPort, kind, field, value,
+occurrence=1)` arms a one-shot drop at the selected forwarding node. Kind values
+0 through 4 select SYN, ACK, SYN-ACK, FIN, or probe; 254 matches any data
+segment. Field 0 matches the transport sequence number and field 1 the ACK
+number. The hook validates the routed TCP packet and is disabled unless a test
+explicitly configures it.
+
 Project 3 uses the 29-byte course packet budget. The encoded course link-layer
 header contributes 0 bytes inside this payload: `SimpleSend.send` receives the
 next-hop address separately, and TinyOS AM framing is outside the 29-byte

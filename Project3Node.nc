@@ -22,7 +22,10 @@ module Project3Node {
 implementation {
    enum {
       TCP_CONSUMER_PAUSE_MS = 8000,
-      TCP_CONSUMER_INTERVAL_MS = 500
+      TCP_CONSUMER_INTERVAL_MS = 500,
+      TCP_TEST_DROP_ANY_DATA = 254,
+      TCP_TEST_DROP_SEQ = 0,
+      TCP_TEST_DROP_ACK = 1
    };
 
    // Per-socket test state keeps concurrent producers and consumers independent.
@@ -48,9 +51,24 @@ implementation {
       uint8_t pauseTicks;
    } test_connection_t;
 
+   // One disabled-by-default test rule can discard a selected routed TCP packet.
+   typedef struct test_drop_rule_t {
+      bool active;
+      uint16_t sourceAddress;
+      uint16_t destinationAddress;
+      uint8_t sourcePort;
+      uint8_t destinationPort;
+      uint8_t kind;
+      uint8_t field;
+      uint16_t value;
+      uint16_t occurrence;
+      uint16_t matches;
+   } test_drop_rule_t;
+
    uint16_t nextSequenceNumber = 0;
    socket_t serverSocket = SOCKET_NONE;
    test_connection_t testConnections[MAX_NUM_OF_SOCKETS];
+   test_drop_rule_t testDropRule;
 
 #ifndef TOSSIM
    // Only the simulator has virtual time; keep hardware builds compilable.
@@ -65,6 +83,40 @@ implementation {
    test_connection_t *testConnection(socket_t fd) {
       if (fd >= MAX_NUM_OF_SOCKETS || !testConnections[fd].active) return NULL;
       return &testConnections[fd];
+   }
+
+   // Match a bounded, validated transport header before any test-only drop.
+   bool shouldDropTestPacket(pack *p, uint8_t payloadLength) {
+      tcp_segment_t *segment;
+      uint16_t fieldValue;
+      bool dataSegment;
+      if (!testDropRule.active || p == NULL || payloadLength != sizeof(pack) ||
+          PACK_PROTOCOL(p) != PROTOCOL_TCP ||
+          sizeof(tcp_segment_t) > PACKET_MAX_PAYLOAD_SIZE) return FALSE;
+      segment = (tcp_segment_t *)p->payload;
+      dataSegment = segment->kindLength > TCP_CODE_DATA_BASE &&
+                    segment->kindLength <= TCP_CODE_DATA_BASE + TCP_DATA_SIZE;
+      if (segment->window > SOCKET_BUFFER_SIZE ||
+          (!dataSegment && segment->kindLength > TCP_CODE_PROBE)) return FALSE;
+      if (p->src != testDropRule.sourceAddress ||
+          p->dest != testDropRule.destinationAddress ||
+          segment->srcPort != testDropRule.sourcePort ||
+          segment->destPort != testDropRule.destinationPort ||
+          (testDropRule.kind == TCP_TEST_DROP_ANY_DATA ? !dataSegment :
+           segment->kindLength != testDropRule.kind)) return FALSE;
+      fieldValue = testDropRule.field == TCP_TEST_DROP_ACK ?
+                   segment->ack : segment->seq;
+      if (fieldValue != testDropRule.value) return FALSE;
+      testDropRule.matches++;
+      if (testDropRule.matches != testDropRule.occurrence) return FALSE;
+      testDropRule.active = FALSE;
+      dbg(PROJECT3_TGEN_CHANNEL,
+          "t=%s node=%d conn=%d:%d->%d:%d event=TEST_DROP state=FORWARDING kind=%d field=%s value=%d occurrence=%d netId=%d\n",
+          sim_time_string(), TOS_NODE_ID, p->src, segment->srcPort,
+          p->dest, segment->destPort, segment->kindLength,
+          testDropRule.field == TCP_TEST_DROP_ACK ? "ack" : "seq",
+          fieldValue, testDropRule.matches, p->seq);
+      return TRUE;
    }
 
    // Keep one compact progress line per producer offer or consumer read.
@@ -241,6 +293,37 @@ implementation {
 
    event void CommandHandler.setRoutingMetric(uint8_t enabled) {
       call DistanceVector.setQualityMetric(enabled != 0);
+   }
+
+   event void CommandHandler.setTransportDropRule(
+      uint16_t sourceAddress, uint16_t destinationAddress,
+      uint8_t sourcePort, uint8_t destinationPort,
+      uint8_t kind, uint8_t field, uint16_t value, uint16_t occurrence) {
+      bool dataKind = kind == TCP_TEST_DROP_ANY_DATA;
+      if (sourcePort == 0 || destinationPort == 0 || occurrence == 0 ||
+          field > TCP_TEST_DROP_ACK ||
+          (!dataKind && kind > TCP_CODE_PROBE)) {
+         testDropRule.active = FALSE;
+         dbg(PROJECT3_TGEN_CHANNEL,
+             "t=%s node=%d conn=unknown event=TEST_DROP_RULE_REJECT state=DISABLED reason=invalid-arguments\n",
+             sim_time_string(), TOS_NODE_ID);
+         return;
+      }
+      memset(&testDropRule, 0, sizeof(testDropRule));
+      testDropRule.active = TRUE;
+      testDropRule.sourceAddress = sourceAddress;
+      testDropRule.destinationAddress = destinationAddress;
+      testDropRule.sourcePort = sourcePort;
+      testDropRule.destinationPort = destinationPort;
+      testDropRule.kind = kind;
+      testDropRule.field = field;
+      testDropRule.value = value;
+      testDropRule.occurrence = occurrence;
+      dbg(PROJECT3_TGEN_CHANNEL,
+          "t=%s node=%d conn=%d:%d->%d:%d event=TEST_DROP_RULE_ARM state=ARMED kind=%d field=%s value=%d occurrence=%d\n",
+          sim_time_string(), TOS_NODE_ID, sourceAddress, sourcePort,
+          destinationAddress, destinationPort, kind,
+          field == TCP_TEST_DROP_ACK ? "ack" : "seq", value, occurrence);
    }
 
    event void CommandHandler.printNeighbors() {
@@ -587,6 +670,8 @@ implementation {
       uint8_t cost;
 
       if (PACK_TTL(p) == 0) return;
+      // Drop hooks run before normal delivery or routing and remain off by default.
+      if (shouldDropTestPacket(p, sizeof(pack))) return;
       if (p->dest == TOS_NODE_ID) {
          if (PACK_PROTOCOL(p) == PROTOCOL_TCP) {
             call Transport.receive(p);
