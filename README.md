@@ -270,6 +270,15 @@ acknowledgment/close. Choose another supported non-multiple of 14 with
 `--length`; `--topology` and `--noise` select the route and noise trace.
 `--seed` selects the repeatable TOSSIM random seed (default `1`).
 Detailed output is saved to `logs/project3-long-transfer.log`.
+Run the same long transfer with a seeded noisy link trace to check recovery over
+the routed path:
+
+```sh
+python2 tests/project3/long_transfer.py --noise some_noise.txt --seed 17
+```
+
+This uses the same byte, buffer, sliding-window, and orderly-close checks while
+`TestSim` loads `noise/some_noise.txt`.
 
 `python2 run.py` runs the 300-byte Project 3 example. Its `Project3Run` wrapper
 also exposes `cmdTestServer(serverAddress, listenPort)`,
