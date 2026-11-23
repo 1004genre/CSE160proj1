@@ -336,6 +336,18 @@ connection must deliver and close while the first remains paused; resuming the
 first must finish its exact byte and close checks. `--seed`, `--topology`, and
 `--noise` select the reproducible simulation inputs.
 
+Check bounded retry failure and cleanup with:
+
+```sh
+python2 tests/project3/failure_cleanup.py
+```
+
+This starts a client before port 80 has a listener and checks the explicit
+retry-limit failure, application failure event, and connection cleanup. It then
+starts the listener and reconnects using the same endpoint tuple, proving the
+failed record was released; the reopened transfer must pass its exact content
+and graceful-close checks.
+
 Project 3 uses the 29-byte course packet budget. The encoded course link-layer
 header contributes 0 bytes inside this payload: `SimpleSend.send` receives the
 next-hop address separately, and TinyOS AM framing is outside the 29-byte

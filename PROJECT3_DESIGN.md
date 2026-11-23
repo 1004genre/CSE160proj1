@@ -173,7 +173,7 @@ on their own components while transport retries wait.
 | 3. Orderly close (implemented) | Drain data before FIN; peer FIN/final ACK; bounded retry and TIME_WAIT cleanup | Mid-review script completes setup, transfer, and teardown with state logs |
 | 4. Longer sliding-window validation (driver added) | Transfer at least 1,024 bytes; validate partial ACK advancement and sequence-range retransmission | `tests/project3/long_transfer.py` checks byte-exact delivery, multiple outstanding segments, a short final segment, and bounded buffers |
 | 5. Zero-window validation | 128-byte receive occupancy; test consumer pauses/resumes; probe/recovery for lost reopening update | Sender stops at zero window, resumes, and receiver never overflows |
-| 6. Independent connections and failure | Two simultaneous connection records; fair bounded work; unavailable-listener and retry-exhaustion cleanup | `tests/project3/two_connections.py` pauses one connection while a second completes through the persistent listener |
+| 6. Independent connections and failure | Two simultaneous connection records; fair bounded work; unavailable-listener and retry-exhaustion cleanup | `tests/project3/two_connections.py` pauses one connection while a second completes; `tests/project3/failure_cleanup.py` verifies explicit bounded failure and tuple reuse |
 | 7. Validation and submission docs | Deterministic drop hooks, seven loss-recovery cases, noisy run, reproducible scripts, README results, one-page design PDF, discussion answers | `tests/project3/loss_recovery.py` verifies retransmission after loss of SYN, SYN-ACK, handshake ACK, data, data ACK, FIN, and final close ACK |
 
 ## Full-project completion criteria
