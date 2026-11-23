@@ -328,8 +328,9 @@ python2 tests/project3/loss_recovery.py
 
 The default `--case all` run drops one SYN, SYN-ACK, final handshake ACK, data
 segment, data ACK, FIN, and final close ACK in separate seeded TOSSIM runs. Each
-case requires the expected retransmission event, a successful orderly close,
-exactly 14 consumed bytes, and zero content mismatches. Use `--case data_ack`
+case requires the expected retransmission event with the original transport
+sequence range, a successful orderly close, exactly 14 consumed bytes, and zero
+content mismatches. Use `--case data_ack`
 to inspect one case; `--seed`, `--topology`, and `--noise` select reproducible
 simulation inputs. Per-case logs are written under `logs/project3-loss-*.log`.
 

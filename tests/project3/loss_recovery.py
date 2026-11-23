@@ -21,6 +21,15 @@ CASES = {
     "fin": (3, 1, 3, 0, 15, "FIN_RETX"),
     "close_ack": (1, 1, 3, 1, 2, "FIN_RETX"),
 }
+RETRY_EVENT_NODES = {
+    "syn": ("SYN_TX", "SYN_RETX", 1),
+    "synack": ("SYN_ACK_TX", "SYN_ACK_RETX", 3),
+    "handshake_ack": ("SYN_ACK_TX", "SYN_ACK_RETX", 3),
+    "data": ("DATA_TX", "DATA_RETX", 1),
+    "data_ack": ("DATA_TX", "DATA_RETX", 1),
+    "fin": ("FIN_TX", "FIN_RETX", 1),
+    "close_ack": ("FIN_TX", "FIN_RETX", 3),
+}
 
 
 def read_log(path):
@@ -92,6 +101,17 @@ def run_case(case, args):
     if retry_event not in log:
         raise RuntimeError("{0}: expected {1}; see {2}".format(
             case, retry_event, log_path))
+    # Compare transport sequence range across the original send and retry.
+    sent_event, retry_name, send_node = RETRY_EVENT_NODES[case]
+    original = re.search(
+        r"node=%d .*?event=%s .*?seq=(\d+) len=(\d+)" %
+        (send_node, sent_event), log)
+    retransmitted = re.search(
+        r"node=%d .*?event=%s .*?seq=(\d+) len=(\d+)" %
+        (send_node, retry_name), log)
+    if original is None or retransmitted is None or original.groups() != retransmitted.groups():
+        raise RuntimeError("{0}: retry changed its transport range; see {1}".format(
+            case, log_path))
     if consumed is None or [int(value) for value in consumed.groups()] != [14, 0]:
         raise RuntimeError("{0}: duplicate-safe content check failed; see {1}".format(
             case, log_path))
