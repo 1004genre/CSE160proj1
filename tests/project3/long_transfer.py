@@ -79,6 +79,9 @@ def main():
         log)
     max_outstanding = max_value(
         r"event=DATA_TX .*? outstanding=(\d+)", log)
+    # Intermediate ACKs prove progress advances without resending a full window.
+    ack_progress = [int(value) for value in re.findall(
+        r"node=1 .*?event=ACK_PROGRESS .*?cumAck=(\d+)", log)]
     # The receiver logs occupancy at each accepted in-order segment.
     max_buffered = max_value(
         r"node=3 .*?event=DATA_ACCEPT .*? buffered=(\d+)", log)
@@ -91,6 +94,9 @@ def main():
         raise RuntimeError("Transport close/ACK check failed; see {0}".format(log_path))
     if max_outstanding <= 14 or max_outstanding > 56:
         raise RuntimeError("Sliding-window check failed at {0} bytes".format(max_outstanding))
+    if len(ack_progress) < 2 or not any(
+            1 < value < args.length + 1 for value in ack_progress):
+        raise RuntimeError("Cumulative ACK did not advance through partial progress")
     if max_buffered > 128:
         raise RuntimeError("Receiver exceeded its 128-byte buffer")
     if max_buffered == 0:

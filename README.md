@@ -265,8 +265,8 @@ python2 tests/project3/long_transfer.py
 This sends 1,024 bytes (the documented per-direction sequence limit), waits
 until all bytes have been accepted locally, then requests close. It checks exact
 consumed length, zero content mismatches, a short final segment, multiple
-outstanding data segments, the 128-byte receiver bound, and successful
-acknowledgment/close. Choose another supported non-multiple of 14 with
+outstanding data segments, intermediate cumulative ACK progress, the 128-byte
+receiver bound, and successful acknowledgment/close. Choose another supported non-multiple of 14 with
 `--length`; `--topology` and `--noise` select the route and noise trace.
 `--seed` selects the repeatable TOSSIM random seed (default `1`).
 Detailed output is saved to `logs/project3-long-transfer.log`.
