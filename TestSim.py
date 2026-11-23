@@ -96,7 +96,7 @@ class TestSim:
             self.t.runNextEvent()
 
     # Advance in simulated seconds rather than counting a fixed number of events.
-    def runForSeconds(self, seconds):
+    def runTime(self, seconds):
         deadline = self.t.time() + int(seconds * self.t.ticksPerSecond())
         while self.t.time() < deadline:
             if not self.t.runNextEvent():
@@ -215,6 +215,6 @@ if __name__ == '__main__':
     s.bootAll()
     s.addChannel(s.COMMAND_CHANNEL)
     s.addChannel(s.GENERAL_CHANNEL)
-    s.runForSeconds(20)
+    s.runTime(20)
     s.ping(1, 10, 'Project 2 routed ping')
-    s.runForSeconds(30)
+    s.runTime(30)

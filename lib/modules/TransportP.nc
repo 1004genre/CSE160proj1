@@ -975,7 +975,9 @@ implementation {
       if (sockets[fd].state == SYN_RCVD) {
          if (segment->kindLength == TCP_CODE_ACK &&
              segment->ack == sockets[fd].sendNext &&
-             segment->seq == sockets[fd].rcvNext) {
+             segment->seq >= sockets[fd].rcvNext &&
+             segment->seq <= TCP_INITIAL_SEQUENCE + 1 +
+                            TCP_MAX_TRANSFER_BYTES) {
             logWireSegment(fd, "HANDSHAKE_ACK_RX", segment->seq,
                            segment->ack, 0, segment->window, SUCCESS);
             sockets[fd].hasOutstanding = FALSE;
@@ -988,8 +990,10 @@ implementation {
             logWireSegment(fd, "HANDSHAKE_ACK_DROP", segment->seq,
                            segment->ack, 0, segment->window, FAIL);
             dbg(TRANSPORT_CHANNEL,
-                "Node %d TCP fd %d ignored invalid handshake ACK\n",
-                TOS_NODE_ID, fd);
+                "Node %d TCP fd %d ignored invalid handshake ACK seq %d ack %d expected ack %d receive range %d..%d\n",
+                TOS_NODE_ID, fd, segment->seq, segment->ack,
+                sockets[fd].sendNext, sockets[fd].rcvNext,
+                TCP_INITIAL_SEQUENCE + 1 + TCP_MAX_TRANSFER_BYTES);
          }
          return SUCCESS;
       }

@@ -26,15 +26,15 @@ def main():
                         sim.PROJECT3_TGEN_CHANNEL):
             sim.addChannel(channel, output)
 
-        sim.runForSeconds(30)
+        sim.runTime(30)
         sim.testServer(3, 80)
-        sim.runForSeconds(1)
+        sim.runTime(1)
         # Exceed the 128-byte local buffer to exercise partial writes and resumption.
         sim.testClient(1, 3, 81, 80, expected_bytes)
-        sim.runForSeconds(5)
+        sim.runTime(5)
         sim.closeTestClient(1, 3, 81, 80)
         # Allow the consumer pause, transfer completion, and 18-second TIME_WAIT.
-        sim.runForSeconds(40)
+        sim.runTime(40)
 
     with open(log_path, "r") as result_file:
         log = result_file.read()

@@ -36,7 +36,7 @@ class Project3Run(object):
             channels.append(self.sim.TRANSPORT_CHANNEL)
         for channel in channels:
             self.sim.addChannel(channel, self.output)
-        self.sim.runForSeconds(30)
+        self.sim.runTime(30)
 
     def cmdTestServer(self, serverAddress, listenPort):
         self.sim.testServer(serverAddress, listenPort)
@@ -61,8 +61,8 @@ class Project3Run(object):
         self.sim.resumeTestConsumer(serverAddress, listenPort, clientAddress,
                                     sourcePort)
 
-    def runForSeconds(self, seconds):
-        self.sim.runForSeconds(seconds)
+    def runTime(self, seconds):
+        self.sim.runTime(seconds)
 
     def verifyTransfer(self, clientAddress, serverAddress, srcPort, destPort):
         key = (clientAddress, serverAddress, srcPort, destPort)
@@ -109,15 +109,15 @@ def main():
 
     runner = Project3Run(args.topology, args.noise, args.transport_debug)
     runner.cmdTestServer(3, 80)
-    runner.runForSeconds(1)
+    runner.runTime(1)
     runner.cmdTestClient(1, 3, 81, 80, 300)
-    runner.runForSeconds(5)
+    runner.runTime(5)
     runner.cmdTestConsumerPause(3, 80, 1, 81)
-    runner.runForSeconds(10)
+    runner.runTime(10)
     runner.cmdTestConsumerResume(3, 80, 1, 81)
-    runner.runForSeconds(5)
+    runner.runTime(5)
     runner.cmdClientClose(1, 3, 81, 80)
-    runner.runForSeconds(40)
+    runner.runTime(40)
     runner.verifyTransfer(1, 3, 81, 80)
     print "Verified 300 bytes accepted, acknowledged, and consumed with zero mismatches."
     print "Detailed TOSSIM output: {0}".format(runner.logPath)

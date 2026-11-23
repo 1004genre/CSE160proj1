@@ -22,7 +22,7 @@ def advance(sim, seconds, label, output):
     remaining = seconds
     while remaining > 0:
         interval = min(PROGRESS_INTERVAL, remaining)
-        sim.runForSeconds(interval)
+        sim.runTime(interval)
         remaining -= interval
         report_progress("%s: %d/%d simulated seconds" %
                         (label, seconds - remaining, seconds), output)
@@ -46,23 +46,23 @@ def run_simulation(quality_metric, log_path):
         if quality_metric:
             for node in range(1, 6):
                 sim.setRoutingMetric(node, True)
-                sim.runForSeconds(1)
+                sim.runTime(1)
             advance(sim, METRIC_CONVERGENCE_WAIT,
                     "Quality metric convergence", output)
         sim.neighborDMP(1)
-        sim.runForSeconds(1)
+        sim.runTime(1)
         output.flush()
 
         for sequence in range(PING_COUNT):
             sim.ping(1, 4, "quality-test-%02d" % sequence)
-            sim.runForSeconds(PING_INTERVAL)
+            sim.runTime(PING_INTERVAL)
             if (sequence + 1) % 5 == 0:
                 report_progress("Ping traffic %d/%d complete" %
                                 (sequence + 1, PING_COUNT), output)
 
         advance(sim, 5, "Waiting for final replies", output)
         sim.routeDMP(1)
-        sim.runForSeconds(1)
+        sim.runTime(1)
         report_progress("Finished simulation; parsing results", output)
     finally:
         output.close()

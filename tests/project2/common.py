@@ -21,19 +21,19 @@ def setup(topo, noise="no_noise.txt", wait=30, output=None, channels=None):
                     sim.FLOODING_CHANNEL)
     for channel in channels:
         sim.addChannel(channel, output)
-    sim.runForSeconds(wait)
+    sim.runTime(wait)
     return sim
 
 
 def dump_routes(sim, nodes):
     for node in nodes:
         sim.routeDMP(node)
-        sim.runForSeconds(1)
+        sim.runTime(1)
 
 
 def routed_ping(sim, source, destination, message, wait=10):
     sim.ping(source, destination, message)
-    sim.runForSeconds(wait)
+    sim.runTime(wait)
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +114,7 @@ class Scenario(object):
         self.sim.bootAll()
         for ch in (self.sim.ROUTING_CHANNEL, self.sim.NEIGHBOR_CHANNEL, self.sim.FLOODING_CHANNEL):
             self.sim.addChannel(ch, self.raw)
-        self.sim.runForSeconds(0)
+        self.sim.runTime(0)
 
     # ---- output -----------------------------------------------------------
     def say(self, text=""):
@@ -148,7 +148,7 @@ class Scenario(object):
         return self.sim.t.time() / float(self.sim.t.ticksPerSecond())
 
     def run(self, seconds):
-        self.sim.runForSeconds(seconds)
+        self.sim.runTime(seconds)
         self.raw.flush()
 
     def mark(self):

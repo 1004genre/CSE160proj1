@@ -4,9 +4,6 @@ def main():
     # Get simulation ready to run.
     s = TestSim();
 
-    # Before we do anything, lets simulate the network off.
-    s.runTime(1);
-
     # Load the the layout of the network.
     s.loadTopo("tuna-melt.topo");
 
@@ -23,13 +20,14 @@ def main():
 
     # After sending a ping, simulate a little to prevent collision.
 
-    s.runTime(300);
-    s.testServer(1);
-    s.runTime(60);
+    s.runTime(300)
+    s.testServer(1, 80)
+    s.runTime(60)
 
-    s.testClient(4);
-    s.runTime(1);
-    s.runTime(1000);
+    s.testClient(4, 1, 81, 80, 300)
+    s.runTime(1)
+    s.closeTestClient(4, 1, 81, 80)
+    s.runTime(1000)
 
 
 
