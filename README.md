@@ -311,6 +311,19 @@ segment. Field 0 matches the transport sequence number and field 1 the ACK
 number. The hook validates the routed TCP packet and is disabled unless a test
 explicitly configures it.
 
+Run deterministic loss recovery checks with:
+
+```sh
+python2 tests/project3/loss_recovery.py
+```
+
+The default `--case all` run drops one SYN, SYN-ACK, final handshake ACK, data
+segment, data ACK, FIN, and final close ACK in separate seeded TOSSIM runs. Each
+case requires the expected retransmission event, a successful orderly close,
+exactly 14 consumed bytes, and zero content mismatches. Use `--case data_ack`
+to inspect one case; `--seed`, `--topology`, and `--noise` select reproducible
+simulation inputs. Per-case logs are written under `logs/project3-loss-*.log`.
+
 Project 3 uses the 29-byte course packet budget. The encoded course link-layer
 header contributes 0 bytes inside this payload: `SimpleSend.send` receives the
 next-hop address separately, and TinyOS AM framing is outside the 29-byte
