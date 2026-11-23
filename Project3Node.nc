@@ -68,7 +68,7 @@ implementation {
    }
 
    // Keep one compact progress line per producer offer or consumer read.
-   void logTestProgress(socket_t fd, const char *event) {
+   void logTestProgress(socket_t fd, const char *logEvent) {
       test_connection_t *record = testConnection(fd);
       const char *state;
       if (record == NULL) return;
@@ -79,7 +79,7 @@ implementation {
           "t=%s node=%d conn=%d %d:%d->%d:%d event=%s state=%s accepted=%d acknowledged=%d consumed=%d target=%d mismatches=%d\n",
           sim_time_string(), TOS_NODE_ID, fd, record->localAddress,
           record->localPort, record->remoteAddress, record->remotePort,
-          event, state, record->acceptedBytes, record->acknowledgedBytes,
+          logEvent, state, record->acceptedBytes, record->acknowledgedBytes,
           record->consumedBytes, record->requestedBytes, record->mismatches);
    }
 

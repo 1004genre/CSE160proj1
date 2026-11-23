@@ -103,17 +103,17 @@ implementation {
    }
 
    // Print the fd-to-endpoint mapping once so every event has a stable connection ID.
-   void logConnection(socket_t fd, const char *event) {
+   void logConnection(socket_t fd, const char *logEvent) {
       if (!validSocket(fd)) return;
       dbg(PROJECT3_TGEN_CHANNEL,
           "t=%s node=%d conn=%d %d:%d->%d:%d event=%s state=%s\n",
           sim_time_string(), TOS_NODE_ID, fd, sockets[fd].localAddr,
           sockets[fd].localPort, sockets[fd].remoteAddr,
-          sockets[fd].remotePort, event, stateName(sockets[fd].state));
+          sockets[fd].remotePort, logEvent, stateName(sockets[fd].state));
    }
 
    // Log transport byte positions, current windows, and send-queue acceptance.
-   void logWireSegment(socket_t fd, const char *event, uint16_t seq,
+   void logWireSegment(socket_t fd, const char *logEvent, uint16_t seq,
                        uint16_t ack, uint8_t length, uint8_t window,
                        error_t result) {
       uint16_t outstanding = 0;
@@ -125,7 +125,7 @@ implementation {
           "t=%s node=%d conn=%d %d:%d->%d:%d event=%s state=%s seq=%d len=%d ack=%d wnd=%d outstanding=%d peerWnd=%d queued=%d\n",
           sim_time_string(), TOS_NODE_ID, fd, sockets[fd].localAddr,
           sockets[fd].localPort, sockets[fd].remoteAddr,
-          sockets[fd].remotePort, event, stateName(sockets[fd].state),
+          sockets[fd].remotePort, logEvent, stateName(sockets[fd].state),
           seq, length, ack, window, outstanding, sockets[fd].peerWindow, result);
    }
 
@@ -258,18 +258,18 @@ implementation {
       // Failed tracked sends keep their sequence range for a later transport retry.
       result = call Network.send(sockets[fd].remoteAddr, payload);
       {
-         const char *event = "CONTROL_TX";
-         if (kind == TCP_KIND_DATA) event = "DATA_TX";
-         else if (kind == TCP_CODE_SYN) event = "SYN_TX";
-         else if (kind == TCP_CODE_SYN_ACK) event = "SYN_ACK_TX";
-         else if (kind == TCP_CODE_ACK) event = "ACK_TX";
-         else if (kind == TCP_CODE_FIN) event = "FIN_TX";
-         else if (kind == TCP_CODE_PROBE) event = "WINDOW_PROBE_TX";
-         logWireSegment(fd, event, seq, ack, length, segment->window, result);
+         const char *logEvent = "CONTROL_TX";
+         if (kind == TCP_KIND_DATA) logEvent = "DATA_TX";
+         else if (kind == TCP_CODE_SYN) logEvent = "SYN_TX";
+         else if (kind == TCP_CODE_SYN_ACK) logEvent = "SYN_ACK_TX";
+         else if (kind == TCP_CODE_ACK) logEvent = "ACK_TX";
+         else if (kind == TCP_CODE_FIN) logEvent = "FIN_TX";
+         else if (kind == TCP_CODE_PROBE) logEvent = "WINDOW_PROBE_TX";
+         logWireSegment(fd, logEvent, seq, ack, length, segment->window, result);
       }
       dbg(TRANSPORT_CHANNEL,
           "Node %d TCP fd %d send code %d seq %d ack %d len %d window %d%s\n",
-          TOS_NODE_ID, fd, segment.kindLength, seq, ack, length, segment.window,
+          TOS_NODE_ID, fd, segment->kindLength, seq, ack, length, segment->window,
           track ? " tracked" : "");
       return result;
    }
@@ -346,16 +346,16 @@ implementation {
       uint16_t window;
       error_t result;
       if (sockets[fd].controlOutstanding) {
-         const char *event = "FIN_RETX";
+         const char *logEvent = "FIN_RETX";
          memset(payload, 0, sizeof(payload));
          memcpy(payload, &sockets[fd].lastSegment,
                 sizeof(tcp_segment_t));
          if (sockets[fd].lastSegment.kindLength == TCP_CODE_SYN)
-            event = "SYN_RETX";
+            logEvent = "SYN_RETX";
          else if (sockets[fd].lastSegment.kindLength == TCP_CODE_SYN_ACK)
-            event = "SYN_ACK_RETX";
+            logEvent = "SYN_ACK_RETX";
          result = call Network.send(sockets[fd].remoteAddr, payload);
-         logWireSegment(fd, event, sockets[fd].lastSegment.seq,
+         logWireSegment(fd, logEvent, sockets[fd].lastSegment.seq,
                         sockets[fd].lastSegment.ack, 0,
                         sockets[fd].lastSegment.window, result);
          if (result != SUCCESS) {
