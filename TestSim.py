@@ -32,10 +32,12 @@ class TestSim:
     PROJECT3_TGEN_CHANNEL = "Project3TGen"
     HASHMAP_CHANNEL = "hashmap"
 
-    def __init__(self):
+    def __init__(self, seed=1):
         self.moteids = []
         self.numMote = 0
         self.t = Tossim([])
+        # Fix simulator randomness by default; callers can select another seed.
+        self.t.randomSeed(seed)
         self.r = self.t.radio()
         self.msg = CommandMsg()
         self.pkt = self.t.newPacket()
