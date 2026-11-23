@@ -324,6 +324,18 @@ exactly 14 consumed bytes, and zero content mismatches. Use `--case data_ack`
 to inspect one case; `--seed`, `--topology`, and `--noise` select reproducible
 simulation inputs. Per-case logs are written under `logs/project3-loss-*.log`.
 
+Verify simultaneous connections and listener persistence with:
+
+```sh
+python2 tests/project3/two_connections.py
+```
+
+The scenario pauses the consumer for node 1's 300-byte connection, then opens a
+second 200-byte connection from node 2 through the same listener. The second
+connection must deliver and close while the first remains paused; resuming the
+first must finish its exact byte and close checks. `--seed`, `--topology`, and
+`--noise` select the reproducible simulation inputs.
+
 Project 3 uses the 29-byte course packet budget. The encoded course link-layer
 header contributes 0 bytes inside this payload: `SimpleSend.send` receives the
 next-hop address separately, and TinyOS AM framing is outside the 29-byte
