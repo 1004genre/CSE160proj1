@@ -122,11 +122,84 @@ implementation {
          outstanding = sockets[fd].sendNext - sockets[fd].sendUna;
       if (length > 0 && seq == sockets[fd].sendNext) outstanding += length;
       dbg(PROJECT3_TGEN_CHANNEL,
-          "t=%s node=%d conn=%d %d:%d->%d:%d event=%s state=%s seq=%d len=%d ack=%d wnd=%d outstanding=%d peerWnd=%d queued=%d\n",
+          "t=%s node=%d conn=%d %d:%d->%d:%d event=%s state=%s seq=%d len=%d ack=%d wnd=%d outstanding=%d peerWnd=%d cwnd=%d ssthresh=%d queued=%d\n",
           sim_time_string(), TOS_NODE_ID, fd, sockets[fd].localAddr,
           sockets[fd].localPort, sockets[fd].remoteAddr,
           sockets[fd].remotePort, logEvent, stateName(sockets[fd].state),
-          seq, length, ack, window, outstanding, sockets[fd].peerWindow, result);
+          seq, length, ack, window, outstanding, sockets[fd].peerWindow,
+          sockets[fd].congestionWindow, sockets[fd].slowStartThreshold, result);
+   }
+
+   // Report the per-connection Tahoe window state in the event stream.
+   void logCongestion(socket_t fd, const char *eventName) {
+      const char *phase;
+      if (!validSocket(fd)) return;
+      phase = sockets[fd].congestionWindow < sockets[fd].slowStartThreshold ?
+              "SLOW_START" : "CONGESTION_AVOIDANCE";
+      dbg(PROJECT3_TGEN_CHANNEL,
+          "t=%s node=%d conn=%d %d:%d->%d:%d event=%s phase=%s cwnd=%d ssthresh=%d duplicateAcks=%d outstanding=%d peerWnd=%d\n",
+          sim_time_string(), TOS_NODE_ID, fd, sockets[fd].localAddr,
+          sockets[fd].localPort, sockets[fd].remoteAddr,
+          sockets[fd].remotePort, eventName, phase,
+          sockets[fd].congestionWindow, sockets[fd].slowStartThreshold,
+          sockets[fd].duplicateAcks,
+          sockets[fd].sendNext - sockets[fd].sendUna,
+          sockets[fd].peerWindow);
+   }
+
+   // Grow once per advancing ACK: slow start is exponential, CA is additive.
+   void acknowledgeCongestion(socket_t fd, uint16_t newlyAcked) {
+      uint16_t increment;
+      if (!validSocket(fd) || newlyAcked == 0) return;
+      if (sockets[fd].congestionWindow < sockets[fd].slowStartThreshold) {
+         increment = TCP_DATA_SIZE;
+         if (increment > sockets[fd].senderWindow -
+                         sockets[fd].congestionWindow) {
+            increment = sockets[fd].senderWindow -
+                        sockets[fd].congestionWindow;
+         }
+         if (increment > sockets[fd].slowStartThreshold -
+                         sockets[fd].congestionWindow) {
+            increment = sockets[fd].slowStartThreshold -
+                        sockets[fd].congestionWindow;
+         }
+         sockets[fd].congestionWindow += increment;
+      } else {
+         // Accumulate fractional MSS^2/cwnd growth until a full byte increment.
+         sockets[fd].congestionCredit += TCP_DATA_SIZE * newlyAcked;
+         increment = sockets[fd].congestionCredit /
+                     sockets[fd].congestionWindow;
+         sockets[fd].congestionCredit %= sockets[fd].congestionWindow;
+         if (increment > sockets[fd].senderWindow -
+                         sockets[fd].congestionWindow) {
+            increment = sockets[fd].senderWindow -
+                        sockets[fd].congestionWindow;
+         }
+         sockets[fd].congestionWindow += increment;
+         if (sockets[fd].congestionWindow == sockets[fd].senderWindow)
+            sockets[fd].congestionCredit = 0;
+      }
+      logCongestion(fd, "CONGESTION_ACK");
+   }
+
+   uint8_t reducedThreshold(socket_t fd) {
+      uint16_t value;
+      value = (sockets[fd].sendNext - sockets[fd].sendUna) / 2;
+      if (value < TCP_CONGESTION_MIN_THRESHOLD)
+         value = TCP_CONGESTION_MIN_THRESHOLD;
+      if (value > sockets[fd].senderWindow)
+         value = sockets[fd].senderWindow;
+      return value;
+   }
+
+   // Tahoe timeout recovery cuts new-send credit to one segment.
+   void congestionTimeout(socket_t fd) {
+      sockets[fd].slowStartThreshold = reducedThreshold(fd);
+      sockets[fd].congestionWindow = TCP_CONGESTION_INITIAL_WINDOW;
+      sockets[fd].congestionCredit = 0;
+      sockets[fd].duplicateAcks = 0;
+      sockets[fd].fastRecoveryActive = FALSE;
+      logCongestion(fd, "CONGESTION_TIMEOUT");
    }
 
    socket_t allocateSocket() {
@@ -138,6 +211,8 @@ implementation {
             sockets[fd].state = CLOSED;
             sockets[fd].pendingChild = SOCKET_NONE;
             sockets[fd].senderWindow = TCP_SENDER_WINDOW_SIZE;
+            sockets[fd].congestionWindow = TCP_CONGESTION_INITIAL_WINDOW;
+            sockets[fd].slowStartThreshold = TCP_CONGESTION_INITIAL_THRESHOLD;
             return fd;
          }
       }
@@ -421,8 +496,9 @@ implementation {
           sockets[fd].sendNext < sockets[fd].sendUna) return;
       outstanding = sockets[fd].sendNext - sockets[fd].sendUna;
       if (outstanding > sockets[fd].sendLength) return;
-      window = sockets[fd].senderWindow < sockets[fd].peerWindow ?
-               sockets[fd].senderWindow : sockets[fd].peerWindow;
+      window = sockets[fd].senderWindow < sockets[fd].congestionWindow ?
+               sockets[fd].senderWindow : sockets[fd].congestionWindow;
+      if (window > sockets[fd].peerWindow) window = sockets[fd].peerWindow;
       unsent = sockets[fd].sendLength > outstanding ?
                sockets[fd].sendLength - outstanding : 0;
       while (unsent > 0 && outstanding < window &&
@@ -548,6 +624,24 @@ implementation {
          return;
       }
 
+      if (segment->ack == sockets[fd].sendUna &&
+          segment->window == previousWindow && sockets[fd].hasOutstanding) {
+         if (sockets[fd].duplicateAcks < 255) sockets[fd].duplicateAcks++;
+         logCongestion(fd, "CONGESTION_DUP_ACK");
+         if (sockets[fd].duplicateAcks >= TCP_DUP_ACK_THRESHOLD &&
+             !sockets[fd].fastRecoveryActive) {
+            sockets[fd].slowStartThreshold = reducedThreshold(fd);
+            sockets[fd].congestionWindow = TCP_CONGESTION_INITIAL_WINDOW;
+            sockets[fd].congestionCredit = 0;
+            sockets[fd].fastRecoveryActive = TRUE;
+            sockets[fd].elapsedSeconds = 0;
+            // Retransmit the oldest missing range after three duplicate ACKs.
+            logCongestion(fd, "CONGESTION_FAST_RETRANSMIT");
+            resendOutstanding(fd);
+         }
+         return;
+      }
+
       if (segment->ack > sockets[fd].sendUna) {
          newlyAcked = segment->ack - sockets[fd].sendUna;
          outstanding = sockets[fd].sendNext - sockets[fd].sendUna;
@@ -561,6 +655,9 @@ implementation {
          sockets[fd].sendLength -= newlyAcked;
          sockets[fd].sendAcked += newlyAcked;
          sockets[fd].sendUna = segment->ack;
+         sockets[fd].duplicateAcks = 0;
+         sockets[fd].fastRecoveryActive = FALSE;
+         acknowledgeCongestion(fd, newlyAcked);
          dbg(PROJECT3_TGEN_CHANNEL,
              "t=%s node=%d conn=%d %d:%d->%d:%d event=ACK_PROGRESS state=%s cumAck=%d wnd=%d outstanding=%d ackedTotal=%d\n",
              sim_time_string(), TOS_NODE_ID, fd, sockets[fd].localAddr,
@@ -749,6 +846,7 @@ implementation {
       sockets[fd].remoteAddr = addr->addr;
       sockets[fd].remotePort = addr->port;
       logConnection(fd, "CONN_ALLOC");
+      logCongestion(fd, "CONGESTION_INIT");
       sockets[fd].sendUna = TCP_INITIAL_SEQUENCE;
       sockets[fd].sendNext = TCP_INITIAL_SEQUENCE + 1;
       setState(fd, SYN_SENT);
@@ -909,6 +1007,7 @@ implementation {
          sockets[fd].remoteAddr = package->src;
          sockets[fd].remotePort = segment->srcPort;
          logConnection(fd, "CONN_ALLOC");
+         logCongestion(fd, "CONGESTION_INIT");
          sockets[fd].sendNext = TCP_INITIAL_SEQUENCE + 1;
          sockets[fd].sendUna = TCP_INITIAL_SEQUENCE;
          sockets[fd].peerWindow = segment->window;
@@ -1169,6 +1268,10 @@ implementation {
                } else {
                   sockets[fd].retries++;
                   sockets[fd].elapsedSeconds = 0;
+                  if (!sockets[fd].controlOutstanding &&
+                      sockets[fd].sendNext > sockets[fd].sendUna) {
+                     congestionTimeout(fd);
+                  }
                   resendOutstanding(fd);
                }
             }

@@ -59,6 +59,12 @@ typedef struct socket_store_t{
     uint16_t sendUna;
     uint8_t senderWindow; // Local fixed upper bound for outstanding data.
     uint8_t peerWindow;   // Latest window from a valid peer ACK or handshake.
+    // Each connection owns its congestion window and slow-start threshold.
+    uint8_t congestionWindow;
+    uint8_t slowStartThreshold;
+    uint16_t congestionCredit;
+    uint8_t duplicateAcks;
+    bool fastRecoveryActive;
     uint8_t rcvdBuff[SOCKET_BUFFER_SIZE];
     // rcvLength is received data not yet consumed by the local test application.
     uint16_t rcvLength;
