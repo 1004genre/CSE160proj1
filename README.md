@@ -256,6 +256,21 @@ closes, drops one reopening update, and verifies probe recovery without buffer
 overflow. It also verifies the bytes and cleanup.
 Detailed output is saved to `logs/project3-mid-review.log`.
 
+Run the final-size sliding-window baseline with:
+
+```sh
+python2 tests/project3/long_transfer.py
+```
+
+This sends 1,024 bytes (the documented per-direction sequence limit), waits
+until all bytes have been accepted locally, then requests close. It checks exact
+consumed length, zero content mismatches, a short final segment, multiple
+outstanding data segments, the 128-byte receiver bound, and successful
+acknowledgment/close. Choose another supported non-multiple of 14 with
+`--length`; `--topology` and `--noise` select the route and noise trace.
+`--seed` selects the repeatable TOSSIM random seed (default `1`).
+Detailed output is saved to `logs/project3-long-transfer.log`.
+
 `python2 run.py` runs the 300-byte Project 3 example. Its `Project3Run` wrapper
 also exposes `cmdTestServer(serverAddress, listenPort)`,
 `cmdTestClient(clientAddress, serverAddress, srcPort, destPort, transferBytes)`,
